@@ -1,8 +1,9 @@
-FROM nvidia/cudagl:9.2-devel-ubuntu18.04 as build-anaconda
+FROM nvidia/cudagl:10.0-devel-ubuntu18.04 as build-anaconda
 MAINTAINER Benjamin Land <benland100@gmail.com>
 
 COPY chroma_env.sh /etc/profile.d/
 SHELL ["/bin/bash", "-l", "-c"] 
+RUN apt-key adv --fetch-keys https://developer.download.nvidia.com/compute/cuda/repos/ubuntu1804/x86_64/3bf863cc.pub
 RUN apt-get update && apt-get install -y curl git
 
 WORKDIR /opt/
@@ -12,12 +13,13 @@ RUN ./Anaconda3-2021.05-Linux-x86_64.sh -b -p /opt/anaconda3
 RUN rm Anaconda3-2021.05-Linux-x86_64.sh
 RUN conda install -y -c anaconda boost cmake
 
-FROM nvidia/cudagl:9.2-devel-ubuntu18.04  AS build-root
+FROM nvidia/cudagl:10.0-devel-ubuntu18.04  AS build-root
 MAINTAINER Benjamin Land <benland100@gmail.com>
 
 USER root
 COPY chroma_env.sh /etc/profile.d/
 SHELL ["/bin/bash", "-l", "-c"] 
+RUN apt-key adv --fetch-keys https://developer.download.nvidia.com/compute/cuda/repos/ubuntu1804/x86_64/3bf863cc.pub
 RUN apt-get update && apt-get install -y curl git
 COPY --from=build-anaconda /opt/anaconda3 /opt/anaconda3
 ARG DEBIAN_FRONTEND=noninteractive
@@ -33,12 +35,13 @@ RUN make -j12
 RUN make install
 RUN rm -rf /opt/root-6.22.02
 
-FROM nvidia/cudagl:9.2-devel-ubuntu18.04  as build-geant4
+FROM nvidia/cudagl:10.0-devel-ubuntu18.04  as build-geant4
 MAINTAINER Benjamin Land <benland100@gmail.com>
 
 USER root
 COPY chroma_env.sh /etc/profile.d/
 SHELL ["/bin/bash", "-l", "-c"] 
+RUN apt-key adv --fetch-keys https://developer.download.nvidia.com/compute/cuda/repos/ubuntu1804/x86_64/3bf863cc.pub
 RUN apt-get update && apt-get install -y curl git
 COPY --from=build-anaconda /opt/anaconda3 /opt/anaconda3
 ARG DEBIAN_FRONTEND=noninteractive
@@ -67,12 +70,13 @@ RUN make install
 RUN rm -rf /opt/geant4.10.05.p01
 
 
-FROM nvidia/cudagl:9.2-devel-ubuntu18.04
+FROM nvidia/cudagl:10.0-devel-ubuntu18.04
 MAINTAINER Benjamin Land <benland100@gmail.com>
 
 USER root
 COPY chroma_env.sh /etc/profile.d/
 SHELL ["/bin/bash", "-l", "-c"] 
+RUN apt-key adv --fetch-keys https://developer.download.nvidia.com/compute/cuda/repos/ubuntu1804/x86_64/3bf863cc.pub
 RUN apt-get update && apt-get install -y curl git
 COPY --from=build-anaconda /opt/anaconda3 /opt/anaconda3
 ARG DEBIAN_FRONTEND=noninteractive
