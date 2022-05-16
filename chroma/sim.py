@@ -16,7 +16,7 @@ from timeit import default_timer as timer
 def pick_seed():
     """Returns a seed for a random number generator selected using
     a mixture of the current time and the current process ID."""
-    return (int(time.time()) ^ (os.getpid()))%(2**32-1)
+    return int(time.time()) ^ (os.getpid() << 16) & 2**32-1
 
 class Simulation(object):
     def __init__(self, detector, seed=None, cuda_device=None, particle_tracking=False, photon_tracking=False,
