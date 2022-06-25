@@ -22,5 +22,6 @@ jobs:
         name: Build and push
         uses: docker/build-push-action@v3
         with:
+          context: "{{defaultContext}}:installation/chroma3.nvidia"
           push: true
           tags: stjimmys/chroma3:nvidia.cuda10.ci
