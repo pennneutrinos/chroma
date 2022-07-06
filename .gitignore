@@ -12,3 +12,5 @@ distribute*.gz
 distribute*.egg
 .coverage
 *.simg
+
+.vscode
