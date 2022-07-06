@@ -18,7 +18,7 @@ standard_wavelengths = np.arange(60, 1000, 5).astype(np.float32)
 
 class Mesh(object):
     "Triangle mesh object."
-    def __init__(self, vertices, triangles, remove_duplicate_vertices=False):
+    def __init__(self, vertices, triangles, remove_duplicate_vertices=False, round=True, remove_null_triangles=True):
         vertices = np.asarray(vertices, dtype=np.float32)
         triangles = np.asarray(triangles, dtype=np.int32)
 
@@ -37,9 +37,16 @@ class Mesh(object):
 
         self.vertices = vertices
         self.triangles = triangles
-
+        if len(self.vertices) == 0:
+            logger.warning("Generated mesh has no vertices.")
+        if len(self.triangles) == 0:
+            logger.warning("Generated mesh has no triangles.")
+        if round:
+            self.vertices = self.vertices.round(decimals=10)
         if remove_duplicate_vertices:
             self.remove_duplicate_vertices()
+        if remove_null_triangles:
+            self.remove_null_triangles()
 
     def get_triangle_centers(self):
         "Returns the x,y,z coordinate of the center of each triangle."
@@ -65,6 +72,8 @@ class Mesh(object):
         Returns the mask of retained triangles, which may be applied to the
         material, surface, etc., arrays of an associated ``Solid``.
         '''
+        if len(self.triangles) == 0:
+            return
         mask = np.array([(len(set(x)) == 3) for x in self.triangles])
         self.triangles = self.triangles[mask]
         return mask
