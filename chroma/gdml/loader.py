@@ -11,6 +11,7 @@ from chroma.geometry import Mesh, Solid
 #replaced _entirely_ by PyMesh...
 import pymesh
 
+
 def box(x,y,z):
     '''Generate a mesh for a GDML box primitive'''
     return pymesh.generate_box_mesh([-x/2,-y/2,-z/2],[x/2,y/2,z/2])
