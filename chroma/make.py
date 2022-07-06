@@ -144,7 +144,7 @@ def torus(radius, offset, nsteps=64, circle_steps=None):
     if circle_steps is None:
         circle_steps = nsteps
     profile_angles = np.linspace(0, 2*np.pi, circle_steps)
-    return rotate_extrude(np.cos(profile_angles) + offset, np.sin(profile_angles), nsteps)
+    return rotate_extrude(radius * np.cos(profile_angles) + offset, radius * np.sin(profile_angles), nsteps)
 
 def convex_polygon(x, y):
     """
