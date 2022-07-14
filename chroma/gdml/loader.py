@@ -96,7 +96,7 @@ class GDMLLoader:
         self.world = Volume(world_ref, self)
         self.mesh_cache = {}
         
-    def get_pos_rot(self, elem):
+    def get_pos_rot(self, elem, refs=('position', 'rotation')):
         ''' 
         Searches for position and rotation children of an Element. The found
         Elements are returned as a tuple as a tuple. Checks for elements
@@ -104,14 +104,15 @@ class GDMLLoader:
         positionref, rotationref using defined values. Returns None if 
         neither inline nor ref is specified.
         '''           
-        pos = elem.find('position')
+        pos_ref, rot_ref = refs
+        pos = elem.find(pos_ref)
         if pos is None:
-            pos = elem.find('positionref')
+            pos = elem.find(pos_ref + 'ref')
             if pos is not None:
                 pos = self.pos_map[pos.get('ref')]
-        rot = elem.find('rotation')
+        rot = elem.find(rot_ref)
         if rot is None:
-            rot = elem.find('rotationref')
+            rot = elem.find(rot_ref + 'ref')
             if rot is not None:
                 rot = self.rot_map[rot.get('ref')]
         return pos,rot
@@ -149,14 +150,15 @@ class GDMLLoader:
         if mesh_type in ('union', 'subtraction', 'intersection'):
             a = self.get_mesh(elem.find('first').get('ref'))
             b = self.get_mesh(elem.find('second').get('ref'))
+            fpos, frot = self.get_pos_rot(elem, refs=('firstposition', 'firstrotation'))
             pos, rot = self.get_pos_rot(elem)
-            pos_val = None
-            rot_val = None
-            if pos is not None:
-                pos_val = helper.get_vals(pos)
-            if rot is not None:
-                rot_val = helper.get_vals(rot)
-            mesh = gen_mesh.gdml_boolean(a, b, mesh_type, pos=pos_val, rot=rot_val)
+            posrot_entries = (fpos, frot, pos, rot)
+            posrot_vals = [None]*4
+            for i, entry in enumerate(posrot_entries):
+                if entry is not None:
+                    posrot_vals[i] = helper.get_vals(entry)
+            
+            mesh = gen_mesh.gdml_boolean(a, b, mesh_type, firstpos=posrot_vals[0], firstrot=posrot_vals[1], pos=posrot_vals[2], rot=posrot_vals[3])
             return mesh
         dispatcher = {
             'box':              helper.box,
