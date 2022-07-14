@@ -16,11 +16,21 @@ def mesh_to_pymesh(mesh):
 def pymesh_to_mesh(mesh_p):
     return Mesh(mesh_p.vertices, mesh_p.faces)
 
-def gdml_boolean(mesh_1, mesh_2, op, engine='auto', pos=None, rot=None):
+def gdml_boolean(mesh_1, mesh_2, op, engine='auto', firstpos = None, firstrot= None, pos=None, rot=None):
     # pymesh boolean method wrapper for chroma mesh
     if op == 'subtraction':
         op = 'difference' # difference is called subtraction in gdml
+    mesh_1 = copy.deepcopy(mesh_1)
     mesh_2 = copy.deepcopy(mesh_2)
+    if firstrot is not None:
+        rot_matrix = np.identity(3)
+        for idx, phi in enumerate(firstrot):
+            axis = np.zeros(3)
+            axis[idx] = 1
+            rot_matrix = np.inner(rot_matrix, make_rotation_matrix(phi, axis))
+        mesh_1.vertices = np.inner(mesh_1.vertices, rot_matrix)
+    if firstpos is not None:
+        mesh_1.vertices += firstpos
     if rot is not None:
         rot_matrix = np.identity(3)
         for idx, phi in enumerate(rot):
