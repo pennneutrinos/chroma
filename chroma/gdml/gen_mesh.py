@@ -2,9 +2,10 @@ import chroma.make as make
 import pymesh
 from chroma.geometry import Mesh
 from chroma.transform import rotate, make_rotation_matrix
-import numpy as np
-
 from chroma.log import logger
+
+import numpy as np
+import copy 
 
 ## Generate meshes for GDML solids. 
 ## TODO add extra parameters for mesh resolution
@@ -19,6 +20,7 @@ def gdml_boolean(mesh_1, mesh_2, op, engine='auto', pos=None, rot=None):
     # pymesh boolean method wrapper for chroma mesh
     if op == 'subtraction':
         op = 'difference' # difference is called subtraction in gdml
+    mesh_2 = copy.deepcopy(mesh_2)
     if rot is not None:
         rot_matrix = np.identity(3)
         for idx, phi in enumerate(rot):
