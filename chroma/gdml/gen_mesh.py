@@ -1,7 +1,7 @@
 import chroma.make as make
 import pymesh
 from chroma.geometry import Mesh
-from chroma.transform import rotate
+from chroma.transform import rotate, make_rotation_matrix
 import numpy as np
 
 from chroma.log import logger
@@ -15,8 +15,19 @@ def mesh_to_pymesh(mesh):
 def pymesh_to_mesh(mesh_p):
     return Mesh(mesh_p.vertices, mesh_p.faces)
 
-def gdml_boolean(mesh_1, mesh_2, op, engine='auto'):
+def gdml_boolean(mesh_1, mesh_2, op, engine='auto', pos=None, rot=None):
     # pymesh boolean method wrapper for chroma mesh
+    if op == 'subtraction':
+        op = 'difference' # difference is called subtraction in gdml
+    if rot is not None:
+        rot_matrix = np.identity(3)
+        for idx, phi in enumerate(rot):
+            axis = np.zeros(3)
+            axis[idx] = 1
+            rot_matrix = np.inner(rot_matrix, make_rotation_matrix(phi, axis))
+        mesh_2.vertices = np.inner(mesh_2.vertices, rot_matrix)
+    if pos is not None:
+        mesh_2.vertices += pos
     m1_p = mesh_to_pymesh(mesh_1)
     m2_p = mesh_to_pymesh(mesh_2)
     result_p = pymesh.boolean(m1_p, m2_p, op, engine=engine)
@@ -26,7 +37,7 @@ def gdml_box(dx, dy, dz):
     return make.box(dx, dy, dz)
 
 def cylinder_segment(r, z, startphi, deltaphi):
-    angles = np.linspace(startphi, deltaphi, 5, endpoint=True)
+    angles = np.linspace(startphi, startphi+deltaphi, 5, endpoint=True)
     vertices = np.vstack(
         [[[0, 0, -z/2]], 
         np.array([r * np.cos(angles), r * np.sin(angles), -(z/2)*np.ones(len(angles))]).transpose(), 
@@ -44,7 +55,7 @@ def cylinder_segment(r, z, startphi, deltaphi):
     faces.extend([[len(angles), 0, 2*len(angles)+1], [2*len(angles)+1, 0, len(angles)+1]])
     return Mesh(vertices, faces)
 
-def gdml_polycone(startphi, deltaphi, zplane):
+def gdml_polycone(startphi, deltaphi, zplane, nsteps=64):
     seg_list = []
     zplane = sorted(zplane, key=lambda p: p['z'])
     for pa, pb in zip(zplane, zplane[1:]):
@@ -55,6 +66,7 @@ def gdml_polycone(startphi, deltaphi, zplane):
             center_a, center_b, # centers
             pa['rmax'], pb['rmax'], # outer radii
             pa['rmin'], pb['rmin'], # inner radius
+            num_segments=nsteps
         )
         seg_list.append(segment)
     # weld everything together
@@ -111,7 +123,7 @@ def gdml_polyhedra(startphi, deltaphi, numsides, zplane):
         segment = cylinder_segment(max_radius*1.5, max_height*1.5, startphi, deltaphi)
         result = gdml_boolean(result, segment, 'intersection')
     # cleanup
-    result.vertices, result.triangles, _ = pymesh.collapse_short_edges_raw(result.vertices, result.triangles, abs_threshold = min([p['rmin'] for p in zplane])/20)
+    result.vertices, result.triangles, _ = pymesh.collapse_short_edges_raw(result.vertices, result.triangles, abs_threshold = min(min([p['rmin'] for p in zplane])/20, 10.))
     return result
 
 
@@ -135,16 +147,14 @@ def _sphere_segment_theta(r, starttheta, endtheta, nsteps=64):
     # Fix rotated shape's orientation, making it equivalent to spinning around z axis
     result.vertices[:, [1, 2]] = result.vertices[:, [2, 1]]
     result.vertices[:, 1] *= -1
-    # Aggresively redurce vertex count to accelerate boolean build. This is fine, as long as the wedge is slightly
-    # bigger than the other mesh to boolean with, as vertices are placed at the correct thetas.
-    # result.vertices, result.triangles, _ = pymesh.collapse_short_edges_raw(result.vertices, result.triangles, abs_threshold=0.5)
     return result
 
-def gdml_orb(r, order=3):
-    result_p = pymesh.generate_icosphere(r, center=(0, 0, 0), refinement_order=3)
+def gdml_orb(r, order=4):
+    result_p = pymesh.generate_icosphere(r, center=(0, 0, 0), refinement_order=order)
     return pymesh_to_mesh(result_p)
 
 def gdml_sphere(rmin, rmax, startphi, deltaphi, starttheta, deltatheta):
+    print(rmin, rmax, startphi, deltaphi, starttheta, deltatheta)
     # GDML Sphere can be an incomplete spherical shell
     assert (starttheta >= 0 and starttheta <= np.pi and starttheta + deltatheta >= 0 and starttheta + deltatheta <= np.pi), \
         logger.error("theta spec is not between [0, pi]")
@@ -159,19 +169,19 @@ def gdml_sphere(rmin, rmax, startphi, deltaphi, starttheta, deltatheta):
     # cleanup
     # carve in theta
     endtheta = starttheta + deltatheta
-    nsteps = 4
+    nsteps = 64
     ## Cut off [0, starttheta]
     if starttheta > 0:
         top = _sphere_segment_theta(rmax*1.5, 0, starttheta, nsteps)
-        result = gdml_boolean(result, top, "difference", 'cgal')
+        result = gdml_boolean(result, top, "difference", engine='cgal')
     ## Cut off [endtheta, pi]
     if endtheta < np.pi:
         bottom = _sphere_segment_theta(rmax*1.5, endtheta, np.pi, nsteps)
-        result = gdml_boolean(result, bottom, "difference", 'cgal')
+        result = gdml_boolean(result, bottom, "difference", engine='cgal')
     # result.vertices, result.triangles, _ = pymesh.split_long_edges_raw(result.vertices, result.triangles, 
     #     max_edge_length=0.1)
     # result.vertices, result.triangles, _ = pymesh.collapse_short_edges_raw(result.vertices, result.triangles, rel_threshold=0.25)
-    result.vertices, result.triangles, _ = pymesh.collapse_short_edges_raw(result.vertices, result.triangles, abs_threshold = rmin/20)
+    result.vertices, result.triangles, _ = pymesh.collapse_short_edges_raw(result.vertices, result.triangles, abs_threshold = min(rmin/20, 10.))
 
     return result
 
