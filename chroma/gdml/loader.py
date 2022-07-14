@@ -10,7 +10,8 @@ from chroma.geometry import Mesh, Solid
 #operations like subtractions or unions. Perhaps Chroma's meshes should be
 #replaced _entirely_ by PyMesh...
 import pymesh
-
+from chroma.gdml import loader_helper as helper
+from chroma.gdml import gen_mesh
 
 def box(x,y,z):
     '''Generate a mesh for a GDML box primitive'''
@@ -142,35 +143,34 @@ class GDMLLoader:
         '''
         if solid_ref in self.mesh_cache:
             return self.mesh_cache[solid_ref]
-        elem = self.solid_map[solid_ref]
+        elem = self.solid_map[solid_ref] ## FIXME: USE lru_cache for caching?
         mesh_type = elem.tag
-        if mesh_type == 'box':
-            x, y, z = self.get_vals(elem,unit_attr='lunit')
-            mesh = box(x, y, z)
-        elif mesh_type == 'tube':
-            ascale = units[elem.get('aunit', default='deg')]
-            deltaphi = ascale*self.get_val(elem, 'deltaphi', default=360)
-            assert deltaphi == np.pi*2, 'partial tubes not implemented'
-            scale = units[elem.get('lunit', default='cm')]
-            rmin = scale*self.get_val(elem,'rmin',default=0)
-            assert rmin == 0, 'hollow tubes not implemented'
-            rmax = scale*self.get_val(elem, 'rmax')
-            z = scale*self.get_val(elem, 'z')
-            mesh = tube(z,rmax)
-        elif mesh_type == 'subtraction':
+        print(f"{str(len(self.mesh_cache))+'/'+str(len(self.solid_map)):<12} {mesh_type:<15} {solid_ref:<100}    ", end='\r', flush=True)
+        if mesh_type in ('union', 'subtraction', 'intersection'):
             a = self.get_mesh(elem.find('first').get('ref'))
             b = self.get_mesh(elem.find('second').get('ref'))
             pos, rot = self.get_pos_rot(elem)
+            pos_val = None
+            rot_val = None
             if pos is not None:
-                x, y, z = self.get_vals(pos)
-                b = pymesh.form_mesh(b.vertices + np.asarray([x, y, z]), b.faces)
+                pos_val = helper.get_vals(pos)
             if rot is not None:
-                rx, ry, rz = self.get_vals(rot)
-                #FIXME use rotation to modify b
-                assert rx==0 and ry==0 and rz==0, 'rotation not implemented'
-            mesh = pymesh.boolean(a, b, operation='difference')
-        else:
-            raise Exception('Solid not implemented: '+self.tag)
+                rot_val = helper.get_vals(rot)
+            mesh = gen_mesh.gdml_boolean(a, b, mesh_type, pos=pos_val, rot=rot_val)
+            return mesh
+        dispatcher = {
+            'box':              helper.box,
+            'eltube':           helper.eltube,
+            'orb':              helper.orb,
+            'polycone':         helper.polycone,
+            'polyhedra':        helper.polyhedra,
+            'sphere':           helper.sphere,
+            'torus':            helper.torus,
+            'tube':             helper.tube,
+            'opticalsurface':   helper.ignore,
+        }
+        generator = dispatcher.get(mesh_type, helper.notImplemented)
+        mesh = generator(elem)
         self.mesh_cache[solid_ref] = mesh
         return mesh
         
@@ -203,8 +203,9 @@ class GDMLLoader:
                 z_rot = make_rotation_matrix(c_rot[2], [0, 0, 1])
                 c_rot = np.matmul(rot, np.matmul(x_rot, np.matmul(y_rot, z_rot))) #FIXME verify this order
                 q.append([child, c_pos, c_rot, v.material_ref])
-            m = self.get_mesh(v.solid_ref)
-            mesh = Mesh(m.vertices, m.faces) # convert PyMesh mesh to Chroma mesh
+            mesh = self.get_mesh(v.solid_ref)
+            if mesh is None:
+                continue
             classification, kwargs = volume_classifier(v.name, v.material_ref, parent_material_ref)
             if classification == 'pmt':
                 channel_type = kwargs.pop('channel_type',None)
