@@ -142,7 +142,7 @@ def gdml_tube(rmin, rmax, z, startphi, deltaphi):
 def _sphere_segment_theta(r, starttheta, endtheta, nsteps=64):
     "make a sphere with theta extending from starttheta to endtheta"
     assert starttheta ==0 or endtheta == np.pi # can only generate closed solids.
-    thetas = np.linspace(starttheta, endtheta, nsteps, endpoint=True)
+    thetas = np.linspace(endtheta, starttheta, nsteps, endpoint=True)
     points = np.array([r * np.sin(thetas), r * np.cos(thetas)]).transpose()
     points = np.vstack([[0, 0], points, [0, 0]])
     result = make.rotate_extrude(points[:, 0], points[:, 1],nsteps)
@@ -171,15 +171,14 @@ def gdml_sphere(rmin, rmax, startphi, deltaphi, starttheta, deltatheta):
     # cleanup
     # carve in theta
     endtheta = starttheta + deltatheta
-    nsteps = 64
-    ## Cut off [0, starttheta]
-    if starttheta > 0:
-        top = _sphere_segment_theta(rmax*1.5, 0, starttheta, nsteps)
-        result = gdml_boolean(result, top, "difference", engine='cgal')
-    ## Cut off [endtheta, pi]
+    nsteps = 16
+
     if endtheta < np.pi:
         bottom = _sphere_segment_theta(rmax*1.5, 0, endtheta, nsteps)
-        result = gdml_boolean(result, bottom, "intersection", engine='cgal')
+        result = gdml_boolean(result, bottom, "intersection")
+    if starttheta > 0:
+        top = _sphere_segment_theta(rmax*1.5, starttheta, np.pi, nsteps)
+        result = gdml_boolean(result, top, "intersection")
     # result.vertices, result.triangles, _ = pymesh.split_long_edges_raw(result.vertices, result.triangles, 
     #     max_edge_length=0.1)
     # result.vertices, result.triangles, _ = pymesh.collapse_short_edges_raw(result.vertices, result.triangles, rel_threshold=0.25)
