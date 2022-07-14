@@ -176,8 +176,8 @@ def gdml_sphere(rmin, rmax, startphi, deltaphi, starttheta, deltatheta):
         result = gdml_boolean(result, top, "difference", engine='cgal')
     ## Cut off [endtheta, pi]
     if endtheta < np.pi:
-        bottom = _sphere_segment_theta(rmax*1.5, endtheta, np.pi, nsteps)
-        result = gdml_boolean(result, bottom, "difference", engine='cgal')
+        bottom = _sphere_segment_theta(rmax*1.5, 0, endtheta, nsteps)
+        result = gdml_boolean(result, bottom, "intersection", engine='cgal')
     # result.vertices, result.triangles, _ = pymesh.split_long_edges_raw(result.vertices, result.triangles, 
     #     max_edge_length=0.1)
     # result.vertices, result.triangles, _ = pymesh.collapse_short_edges_raw(result.vertices, result.triangles, rel_threshold=0.25)
