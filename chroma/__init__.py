@@ -8,6 +8,7 @@ from chroma import generator
 from chroma.generator import constant_particle_gun
 try:
     from chroma import gpu
+    from chroma.sim import Simulation
 except ImportError:
     print("CHROMA IS STARTING WITHOUT A GPU!!")
 from chroma import itertoolset
@@ -16,6 +17,5 @@ from chroma import itertoolset
 from chroma import make
 from chroma.demo import optics
 from chroma import sample
-from chroma.sim import Simulation
 from chroma.stl import mesh_from_stl
 from chroma import transform
