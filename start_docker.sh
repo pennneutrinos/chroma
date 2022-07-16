@@ -1,4 +1,4 @@
-docker run -it --gpus all\
+docker run -it --rm --gpus all\
   -v /media/linux_store/hep/container_home:/root \
   -v /media/linux_store/hep:/media/linux_store/hep \
   -v /media/linux_store/hep/chroma/chroma:/opt/chroma/chroma \
