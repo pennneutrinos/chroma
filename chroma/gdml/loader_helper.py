@@ -1,7 +1,9 @@
 import xml.etree.ElementTree as et
 import numpy as np
+from collections import deque
 
 from chroma.gdml import gen_mesh
+
 ## Utility functions to connect the loader to gen_mesh
 _units = { 'cm':1, 'mm':0.1, 'm':100, 'deg':np.pi/180, 'rad':1 }
 
@@ -87,3 +89,26 @@ def notImplemented(elem):
 
 def ignore(elem):
     return
+
+
+def balanced_consecutive_subtraction(solids:deque):
+    '''
+    Take a deque of solids, perform balanced subtraction that is equivalent to solids[0] - solids[1] - solids[2]...
+    '''
+    print("Current number of solids: ", len(solids))
+    assert len(solids)!=0
+    if len(solids) == 1:
+        return solids[0]
+    # subtraction for the first two
+    next_level = deque()
+    a = solids.popleft()
+    b = solids.popleft()
+    next_level.append(gen_mesh.gdml_boolean(a, b, 'subtraction'))
+    while solids:
+        if len(solids) == 1:
+            next_level.append(solids.pop())
+        else:
+            x = solids.popleft()
+            y = solids.popleft()
+            next_level.append(gen_mesh.gdml_boolean(x, y, 'union'))
+    return balanced_consecutive_subtraction(next_level)
