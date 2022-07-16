@@ -1,6 +1,7 @@
 import xml.etree.ElementTree as et
 import numpy as np
 from collections import deque
+import functools
 
 from chroma.detector import Detector
 from chroma.transform import make_rotation_matrix
@@ -94,7 +95,8 @@ class GDMLLoader:
         
         world_ref = gdml.find('setup').find('world').get('ref')
         self.world = Volume(world_ref, self)
-        self.mesh_cache = {}
+        self.get_mesh = functools.lru_cache(maxsize=2048)(self._get_mesh)
+        self.solid_generated = set()
         
     def get_pos_rot(self, elem, refs=('position', 'rotation')):
         ''' 
@@ -134,20 +136,80 @@ class GDMLLoader:
         txt = elem.get(attr, default=None)
         assert txt is not None or default is not None, 'Missing attribute: '+attr
         return eval(txt, {}, {}) if txt is not None else default
+
+    def n_consecutive_subtractions(self, solid_ref):
+        '''
+        Find the number of consecutive subtractions done on the same object. This shows up in GDML files as a long list
+        of subtractions where the first element is a previous subtraction. These long lists can be optimized to reduce
+        the number of boolean operation done on the same object, hence improving performance.
+        '''
+        elem = self.solid_map[solid_ref]
+        if elem.tag!='subtraction': return 0
+        if elem.find('firstrotation') or elem.find('firstposition'):
+            return 0
+        c1 = elem.find('first').attrib['ref']
+        c2 = elem.find('second').attrib['ref']
+        if self.n_consecutive_subtractions(c2) == 0:
+            return self.n_consecutive_subtractions(c1)+1
+
+    def consecutive_subtraction(self, solid_ref):
+        '''
+        Special Optimization for consecutive subtractions done on the same solid. In terms of a boolean operation tree,
+        it is a tree of subtractio operations who is perfectly impalanced (all right child nodes are leaves). This is
+        effectively:
+            O = S - c1 - c2 - c3 - c4 ...
+        Where S is the first solid left leave, c_n are the cuts, and O is the final output mesh.
+        This method poerforms an optimization as the following:
+            O = (S-c1) - (c2+c3) - (c4+c5) - (c6+c7)...
+              = [(S-c1) - (c2+c3)] - [(c4+c5) + (c6+c7)]
+              = ...
+        Which replaces N consecutive subtraction on the same object with log_2(N) operations on the same object,
+        therefore improves precision.
+        '''
+        # Get all leaves
+        solids = deque()
+        curr = self.solid_map[solid_ref]
+        while curr.tag == 'subtraction':
+            c1 = curr.find('first')
+            c2 = curr.find('second')
+            assert c2.tag != 'subtraction', 'not a pure subtraction list'
+            pos, rot = self.get_pos_rot(curr)
+            pos_val = None
+            rot_val = None
+            if pos is not None:
+                pos_val = helper.get_vals(pos)
+            if rot is not None:
+                rot_val = helper.get_vals(rot)
+            print(f" Generating primary shape #{len(solids)}: {c2.attrib['ref']}")
+            solid = self.get_mesh(c2.attrib['ref'])
+            solid = gen_mesh.transform(solid, pos_val, rot_val)
+            solids.appendleft(solid)
+            curr = self.solid_map[c1.attrib['ref']]
+        print(f" Generating primary shape #{len(solids)}: {curr.attrib['name']}")
+        solids.appendleft(self.get_mesh(curr.attrib['name']))
+        print("All Primaries generated, balanced subtraction begins")
+        return helper.balanced_consecutive_subtraction(solids)
+
         
-    def get_mesh(self,solid_ref):
+
+
+    def _get_mesh(self,solid_ref):
         '''
         Build a PyMesh mesh for the solid identified by solid_ref if the named
         solid has not been built. If it has been built, a cached mesh is returned.
         If the tag of the solid is not yet implemented, or it uses features not
         yet implemented, this will raise an exception.
         '''
-        if solid_ref in self.mesh_cache:
-            return self.mesh_cache[solid_ref]
-        elem = self.solid_map[solid_ref] ## FIXME: USE lru_cache for caching?
+        # if solid_ref in self.mesh_cache:
+        #     return self.mesh_cache[solid_ref]
+        elem = self.solid_map[solid_ref]
         mesh_type = elem.tag
-        print(f"{str(len(self.mesh_cache))+'/'+str(len(self.solid_map)):<12} {mesh_type:<15} {solid_ref:<100}    ", end='\r', flush=True)
-        if mesh_type in ('union', 'subtraction', 'intersection'):
+        # print(f"{str(len(self.solid_generated))+'/'+str(len(self.solid_map)):<12} {mesh_type:<15} {solid_ref:<100}", end='\n', flush=True)
+        # print(self.get_mesh.cache_info())
+        if self.n_consecutive_subtractions(solid_ref) > 16: # special optimization for long chain of subtraction
+            print(f"Found subtraction chain of length {self.n_consecutive_subtractions(solid_ref)}, optimizing")
+            mesh = self.consecutive_subtraction(solid_ref)
+        elif mesh_type in ('union', 'subtraction', 'intersection'): # default boolean operations
             a = self.get_mesh(elem.find('first').get('ref'))
             b = self.get_mesh(elem.find('second').get('ref'))
             fpos, frot = self.get_pos_rot(elem, refs=('firstposition', 'firstrotation'))
@@ -159,21 +221,21 @@ class GDMLLoader:
                     posrot_vals[i] = helper.get_vals(entry)
             
             mesh = gen_mesh.gdml_boolean(a, b, mesh_type, firstpos=posrot_vals[0], firstrot=posrot_vals[1], pos=posrot_vals[2], rot=posrot_vals[3])
-            return mesh
-        dispatcher = {
-            'box':              helper.box,
-            'eltube':           helper.eltube,
-            'orb':              helper.orb,
-            'polycone':         helper.polycone,
-            'polyhedra':        helper.polyhedra,
-            'sphere':           helper.sphere,
-            'torus':            helper.torus,
-            'tube':             helper.tube,
-            'opticalsurface':   helper.ignore,
-        }
-        generator = dispatcher.get(mesh_type, helper.notImplemented)
-        mesh = generator(elem)
-        self.mesh_cache[solid_ref] = mesh
+        else: # primaries
+            dispatcher = {
+                'box':              helper.box,
+                'eltube':           helper.eltube,
+                'orb':              helper.orb,
+                'polycone':         helper.polycone,
+                'polyhedra':        helper.polyhedra,
+                'sphere':           helper.sphere,
+                'torus':            helper.torus,
+                'tube':             helper.tube,
+                'opticalsurface':   helper.ignore,
+            }
+            generator = dispatcher.get(mesh_type, helper.notImplemented)
+            mesh = generator(elem)
+        self.solid_generated.add(solid_ref)
         return mesh
         
     def build_detector(self, detector=None, volume_classifier=_default_volume_classifier):
