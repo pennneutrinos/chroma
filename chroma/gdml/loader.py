@@ -206,7 +206,7 @@ class GDMLLoader:
         mesh_type = elem.tag
         # print(f"{str(len(self.solid_generated))+'/'+str(len(self.solid_map)):<12} {mesh_type:<15} {solid_ref:<100}", end='\n', flush=True)
         # print(self.get_mesh.cache_info())
-        if self.n_consecutive_subtractions(solid_ref) > 16: # special optimization for long chain of subtraction
+        if self.n_consecutive_subtractions(solid_ref) > 32: # special optimization for long chain of subtraction
             print(f"Found subtraction chain of length {self.n_consecutive_subtractions(solid_ref)}, optimizing")
             mesh = self.consecutive_subtraction(solid_ref)
         elif mesh_type in ('union', 'subtraction', 'intersection'): # default boolean operations
