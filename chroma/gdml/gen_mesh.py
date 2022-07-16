@@ -16,30 +16,26 @@ def mesh_to_pymesh(mesh):
 def pymesh_to_mesh(mesh_p):
     return Mesh(mesh_p.vertices, mesh_p.faces)
 
-def gdml_boolean(mesh_1, mesh_2, op, engine='auto', firstpos = None, firstrot= None, pos=None, rot=None):
-    # pymesh boolean method wrapper for chroma mesh
-    if op == 'subtraction':
-        op = 'difference' # difference is called subtraction in gdml
-    mesh_1 = copy.deepcopy(mesh_1)
-    mesh_2 = copy.deepcopy(mesh_2)
-    if firstrot is not None:
-        rot_matrix = np.identity(3)
-        for idx, phi in enumerate(firstrot):
-            axis = np.zeros(3)
-            axis[idx] = 1
-            rot_matrix = np.inner(rot_matrix, make_rotation_matrix(phi, axis))
-        mesh_1.vertices = np.inner(mesh_1.vertices, rot_matrix)
-    if firstpos is not None:
-        mesh_1.vertices += firstpos
+def transform(mesh, pos=None, rot=None):
+    mesh = copy.deepcopy(mesh)
     if rot is not None:
         rot_matrix = np.identity(3)
         for idx, phi in enumerate(rot):
             axis = np.zeros(3)
             axis[idx] = 1
             rot_matrix = np.inner(rot_matrix, make_rotation_matrix(phi, axis))
-        mesh_2.vertices = np.inner(mesh_2.vertices, rot_matrix)
+        mesh.vertices = np.inner(mesh.vertices, rot_matrix)
     if pos is not None:
-        mesh_2.vertices += pos
+        mesh.vertices += pos
+    return mesh
+
+def gdml_boolean(mesh_1, mesh_2, op, engine='auto', firstpos = None, firstrot= None, pos=None, rot=None):
+    # pymesh boolean method wrapper for chroma mesh
+    if op == 'subtraction':
+        op = 'difference' # difference is called subtraction in gdml
+    mesh_1 = transform(mesh_1, firstpos, firstrot)
+    mesh_2 = transform(mesh_2, pos, rot)
+    
     m1_p = mesh_to_pymesh(mesh_1)
     m2_p = mesh_to_pymesh(mesh_2)
     result_p = pymesh.boolean(m1_p, m2_p, op, engine=engine)
@@ -67,7 +63,7 @@ def cylinder_segment(r, z, startphi, deltaphi):
     faces.extend([[len(angles), 0, 2*len(angles)+1], [2*len(angles)+1, 0, len(angles)+1]])
     return Mesh(vertices, faces)
 
-def gdml_polycone(startphi, deltaphi, zplane, nsteps=64):
+def gdml_polycone(startphi, deltaphi, zplane, nsteps=32):
     seg_list = []
     zplane = sorted(zplane, key=lambda p: p['z'])
     for pa, pb in zip(zplane, zplane[1:]):
@@ -97,6 +93,9 @@ def gdml_polycone(startphi, deltaphi, zplane, nsteps=64):
 
 def _solid_polyhedra(x_list, z_list, startphi, deltaphi, numsides):
     " Generate a solid polyhedra that has a leftover sides from startphi+delaphi to startphi"
+    # Apparently rmax and rmin are distances to the middle of the sides, not to the vertices
+    theta_per_side = deltaphi / numsides
+    x_list = [x / np.cos(theta_per_side/2) for x in x_list]
     profile = np.array([x_list, np.zeros(len(x_list)), z_list]).transpose()
     if not profile[0, 0] == 0:
         cap_point = np.array([0, 0, profile[0, 2]])
@@ -149,7 +148,7 @@ def gdml_tube(rmin, rmax, z, startphi, deltaphi):
     result = pymesh.boolean(full_tube, mesh_to_pymesh(segment), 'intersection')
     return pymesh_to_mesh(result)
 
-def _sphere_segment_theta(r, starttheta, endtheta, nsteps=64):
+def _sphere_segment_theta(r, starttheta, endtheta, nsteps=16):
     "make a sphere with theta extending from starttheta to endtheta"
     assert starttheta ==0 or endtheta == np.pi # can only generate closed solids.
     thetas = np.linspace(endtheta, starttheta, nsteps, endpoint=True)
@@ -161,19 +160,19 @@ def _sphere_segment_theta(r, starttheta, endtheta, nsteps=64):
     result.vertices[:, 1] *= -1
     return result
 
-def gdml_orb(r, order=4):
+def gdml_orb(r, order=3):
     result_p = pymesh.generate_icosphere(r, center=(0, 0, 0), refinement_order=order)
     return pymesh_to_mesh(result_p)
 
 def gdml_sphere(rmin, rmax, startphi, deltaphi, starttheta, deltatheta):
-    print(rmin, rmax, startphi, deltaphi, starttheta, deltatheta)
+    # print(rmin, rmax, startphi, deltaphi, starttheta, deltatheta)
     # GDML Sphere can be an incomplete spherical shell
     assert (starttheta >= 0 and starttheta <= np.pi and starttheta + deltatheta >= 0 and starttheta + deltatheta <= np.pi), \
         logger.error("theta spec is not between [0, pi]")
     # make spherical shell
-    result = gdml_orb(rmax)
+    result = gdml_orb(rmax, order=3)
     if rmin > 0:
-        result = gdml_boolean(result, gdml_orb(rmin), "difference")
+        result = gdml_boolean(result, gdml_orb(rmin, order=3), "difference")
     # carve in phi direction
     if deltaphi < 2 * np.pi:
         segment = cylinder_segment(rmax*1.5, 2*rmax*1.5, startphi, deltaphi)
@@ -198,7 +197,7 @@ def gdml_sphere(rmin, rmax, startphi, deltaphi, starttheta, deltatheta):
 
 
 
-def gdml_torus(rmin, rmax, rtor, startphi, deltaphi, nsteps=64):
+def gdml_torus(rmin, rmax, rtor, startphi, deltaphi, nsteps=64, circle_steps=32):
     result = make.torus(rmax, rtor, nsteps=nsteps)
     # swap yz
     result.vertices[:, [1, 2]] = result.vertices[:, [2, 1]]
@@ -219,7 +218,7 @@ def gdml_torus(rmin, rmax, rtor, startphi, deltaphi, nsteps=64):
     return result
 
 
-def gdml_eltube(dx, dy, dz, nsteps=64):
+def gdml_eltube(dx, dy, dz, nsteps=32):
     ## NOTE: dz is HALF of total height! (don't ask why)
     angles = np.linspace(0, 2*np.pi, nsteps, endpoint=False)
     return make.linear_extrude(dx*np.cos(angles), dy*np.sin(angles), dz*2)
