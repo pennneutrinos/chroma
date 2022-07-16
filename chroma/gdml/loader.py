@@ -95,7 +95,7 @@ class GDMLLoader:
         
         world_ref = gdml.find('setup').find('world').get('ref')
         self.world = Volume(world_ref, self)
-        self.get_mesh = functools.lru_cache(maxsize=2048)(self._get_mesh)
+        self.get_mesh = functools.lru_cache(maxsize=4096)(self._get_mesh)
         self.solid_generated = set()
         
     def get_pos_rot(self, elem, refs=('position', 'rotation')):
@@ -204,8 +204,8 @@ class GDMLLoader:
         #     return self.mesh_cache[solid_ref]
         elem = self.solid_map[solid_ref]
         mesh_type = elem.tag
-        # print(f"{str(len(self.solid_generated))+'/'+str(len(self.solid_map)):<12} {mesh_type:<15} {solid_ref:<100}", end='\n', flush=True)
-        # print(self.get_mesh.cache_info())
+        print(f"{str(len(self.solid_generated))+'/'+str(len(self.solid_map)):<12} {mesh_type:<15} {solid_ref:<100}", end='\n', flush=True)
+        print(self.get_mesh.cache_info())
         if self.n_consecutive_subtractions(solid_ref) > 32: # special optimization for long chain of subtraction
             print(f"Found subtraction chain of length {self.n_consecutive_subtractions(solid_ref)}, optimizing")
             mesh = self.consecutive_subtraction(solid_ref)
