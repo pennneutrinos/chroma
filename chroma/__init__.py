@@ -6,7 +6,10 @@ from chroma import geometry
 from chroma import event
 from chroma import generator
 from chroma.generator import constant_particle_gun
-from chroma import gpu
+try:
+    from chroma import gpu
+except ImportError:
+    print("CHROMA IS STARTING WITHOUT A GPU!!")
 from chroma import itertoolset
 #from chroma import likelihood
 #from chroma.likelihood import Likelihood
