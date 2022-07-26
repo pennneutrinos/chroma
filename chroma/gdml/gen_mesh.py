@@ -1,7 +1,7 @@
 import chroma.make as make
 import pymesh
 from chroma.geometry import Mesh
-from chroma.transform import rotate, make_rotation_matrix
+from chroma.transform import rotate, rotate_matrix, make_rotation_matrix
 from chroma.log import logger
 
 import numpy as np
@@ -17,18 +17,39 @@ def pymesh_to_mesh(mesh_p):
     return Mesh(mesh_p.vertices, mesh_p.faces)
 
 def transform(mesh, pos=None, rot=None):
-    mesh = copy.deepcopy(mesh)
+    '''Perform translation and rotation for GDML solids.
+    NOTE: GDML solids define rotation oppositely than chroma. Positive rotation is a clockwise rotation when looking
+    towards infinity.
+    '''
+    mesh_result = copy.deepcopy(mesh)
     if rot is not None:
-        rot_matrix = np.identity(3)
         for idx, phi in enumerate(rot):
             axis = np.zeros(3)
             axis[idx] = 1
-            rot_matrix = np.inner(rot_matrix, make_rotation_matrix(phi, axis))
-        mesh.vertices = np.inner(mesh.vertices, rot_matrix)
+            mesh_result.vertices = rotate_matrix(mesh_result.vertices, -phi, axis)
     if pos is not None:
-        mesh.vertices += pos
-    return mesh
+        mesh_result.vertices += pos
+    return mesh_result
 
+def remove_zero_area_faces_raw(vertices, faces):
+    new_faces = []
+    for face in faces:
+        a = vertices[face[0]]
+        b = vertices[face[1]]
+        c = vertices[face[2]]
+        if np.array_equal(a, b) or np.array_equal(a, c) or np.array_equal(b, c): continue
+        product = np.linalg.norm(np.cross(b-a, c-a))
+        if product!=0:
+            new_faces.append(face)
+    new_faces = np.asarray(new_faces)
+    new_vertices, new_faces, _ = pymesh.remove_isolated_vertices_raw(vertices, new_faces)
+    return new_vertices, new_faces
+
+def pymesh_remove_zero_area_faces(mesh_p):
+    mesh = pymesh_to_mesh(mesh_p)
+    mesh.vertices, mesh.triangles = remove_zero_area_faces_raw(mesh.vertices, mesh.triangles)
+    return mesh_to_pymesh(mesh)
+    
 def gdml_boolean(mesh_1, mesh_2, op, engine='auto', firstpos = None, firstrot= None, pos=None, rot=None):
     # pymesh boolean method wrapper for chroma mesh
     if op == 'subtraction':
@@ -39,7 +60,21 @@ def gdml_boolean(mesh_1, mesh_2, op, engine='auto', firstpos = None, firstrot= N
     m1_p = mesh_to_pymesh(mesh_1)
     m2_p = mesh_to_pymesh(mesh_2)
     result_p = pymesh.boolean(m1_p, m2_p, op, engine=engine)
-    return Mesh(result_p.vertices, result_p.faces)
+    # if len(result_p.vertices) > (len(m1_p.vertices) + len(m2_p.vertices) + 1000):
+    #     logger.info("Boolean op generated a lot more additional triangles, optimizing...")
+    #     result_p, info = pymesh.collapse_short_edges(result_p, rel)
+    result = pymesh_to_mesh(result_p)
+    result_p = mesh_to_pymesh(result)
+    # logger.debug(f"{result_p.vertices.shape}, {result_p.faces.shape}")
+    # logger.debug("Cleaning up")
+    cleaned, _ = pymesh.remove_duplicated_vertices(result_p, tol=1e-10)
+    # cleaned, _ = pymesh.remove_degenerated_triangles(cleaned)
+    cleaned, _ = pymesh.remove_duplicated_faces(cleaned)
+    # cleaned, _ = pymesh.remove_degenerated_triangles(cleaned)
+    # cleaned = pymesh.resolve_self_intersection(cleaned)
+    # cleaned, _ = pymesh.remove_duplicated_faces(cleaned)
+    # logger.debug(f"{cleaned.vertices.shape}, {cleaned.faces.shape}")
+    return pymesh_to_mesh(result_p)
 
 def gdml_box(dx, dy, dz):
     return make.box(dx, dy, dz)
@@ -63,7 +98,7 @@ def cylinder_segment(r, z, startphi, deltaphi):
     faces.extend([[len(angles), 0, 2*len(angles)+1], [2*len(angles)+1, 0, len(angles)+1]])
     return Mesh(vertices, faces)
 
-def gdml_polycone(startphi, deltaphi, zplane, nsteps=32):
+def gdml_polycone(startphi, deltaphi, zplane, nsteps=64):
     seg_list = []
     zplane = sorted(zplane, key=lambda p: p['z'])
     for pa, pb in zip(zplane, zplane[1:]):
@@ -165,7 +200,6 @@ def gdml_orb(r, order=3):
     return pymesh_to_mesh(result_p)
 
 def gdml_sphere(rmin, rmax, startphi, deltaphi, starttheta, deltatheta):
-    # print(rmin, rmax, startphi, deltaphi, starttheta, deltatheta)
     # GDML Sphere can be an incomplete spherical shell
     assert (starttheta >= 0 and starttheta <= np.pi and starttheta + deltatheta >= 0 and starttheta + deltatheta <= np.pi), \
         logger.error("theta spec is not between [0, pi]")
@@ -197,7 +231,7 @@ def gdml_sphere(rmin, rmax, startphi, deltaphi, starttheta, deltatheta):
 
 
 
-def gdml_torus(rmin, rmax, rtor, startphi, deltaphi, nsteps=64, circle_steps=32):
+def gdml_torus(rmin, rmax, rtor, startphi, deltaphi, nsteps=64, circle_steps=64):
     result = make.torus(rmax, rtor, nsteps=nsteps)
     # swap yz
     result.vertices[:, [1, 2]] = result.vertices[:, [2, 1]]
@@ -209,7 +243,7 @@ def gdml_torus(rmin, rmax, rtor, startphi, deltaphi, nsteps=64, circle_steps=32)
         segment = cylinder_segment(max_radius*1.5, max_height*1.5, startphi, deltaphi)
         result = gdml_boolean(result, segment, 'intersection')
     if rmin != 0:
-        inner = make.torus(rmin, rtor, nsteps=nsteps)
+        inner = make.torus(rmin, rtor, nsteps=nsteps, circle_steps=circle_steps)
         # swap yz
         inner.vertices[:, [1, 2]] = inner.vertices[:, [2, 1]]
         inner.vertices[:, 1] *= -1
@@ -218,7 +252,7 @@ def gdml_torus(rmin, rmax, rtor, startphi, deltaphi, nsteps=64, circle_steps=32)
     return result
 
 
-def gdml_eltube(dx, dy, dz, nsteps=32):
+def gdml_eltube(dx, dy, dz, nsteps=64):
     ## NOTE: dz is HALF of total height! (don't ask why)
     angles = np.linspace(0, 2*np.pi, nsteps, endpoint=False)
     return make.linear_extrude(dx*np.cos(angles), dy*np.sin(angles), dz*2)

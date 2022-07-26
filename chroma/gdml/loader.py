@@ -6,6 +6,8 @@ import functools
 from chroma.detector import Detector
 from chroma.transform import make_rotation_matrix
 from chroma.geometry import Mesh, Solid
+from chroma.log import logger
+
 
 #Using the PyMesh library instead of Chroma's internal meshes to support boolean
 #operations like subtractions or unions. Perhaps Chroma's meshes should be
@@ -96,6 +98,7 @@ class GDMLLoader:
         world_ref = gdml.find('setup').find('world').get('ref')
         self.world = Volume(world_ref, self)
         self.get_mesh = functools.lru_cache(maxsize=4096)(self._get_mesh)
+        self.n_consecutive_op = functools.lru_cache(maxsize=512)(self._n_consecutive_op)
         self.solid_generated = set()
         
     def get_pos_rot(self, elem, refs=('position', 'rotation')):
@@ -137,20 +140,22 @@ class GDMLLoader:
         assert txt is not None or default is not None, 'Missing attribute: '+attr
         return eval(txt, {}, {}) if txt is not None else default
 
-    def n_consecutive_subtractions(self, solid_ref):
+    def _n_consecutive_op(self, solid_ref, op):
         '''
-        Find the number of consecutive subtractions done on the same object. This shows up in GDML files as a long list
-        of subtractions where the first element is a previous subtraction. These long lists can be optimized to reduce
+        Find the number of consecutive op done on the same object. This shows up in GDML files as a long list
+        of op where the first element is a previous subtraction. These long lists can be optimized to reduce
         the number of boolean operation done on the same object, hence improving performance.
+        FIXME: Is requring that the RHS is not op necessary?
         '''
         elem = self.solid_map[solid_ref]
-        if elem.tag!='subtraction': return 0
-        if elem.find('firstrotation') or elem.find('firstposition'):
+        if elem.tag!=op: return 0
+        if elem.find('firstrotation')!=None or elem.find('firstposition')!=None:
             return 0
         c1 = elem.find('first').attrib['ref']
         c2 = elem.find('second').attrib['ref']
-        if self.n_consecutive_subtractions(c2) == 0:
-            return self.n_consecutive_subtractions(c1)+1
+        if self.n_consecutive_op(c2, op) == 0:
+            return self.n_consecutive_op(c1, op)+1
+        else: return 0
 
     def consecutive_subtraction(self, solid_ref):
         '''
@@ -169,7 +174,7 @@ class GDMLLoader:
         # Get all leaves
         solids = deque()
         curr = self.solid_map[solid_ref]
-        while curr.tag == 'subtraction':
+        while self.n_consecutive_op(curr.attrib['name'], 'subtraction')!=0:
             c1 = curr.find('first')
             c2 = curr.find('second')
             assert c2.tag != 'subtraction', 'not a pure subtraction list'
@@ -180,19 +185,44 @@ class GDMLLoader:
                 pos_val = helper.get_vals(pos)
             if rot is not None:
                 rot_val = helper.get_vals(rot)
-            print(f" Generating primary shape #{len(solids)}: {c2.attrib['ref']}")
+            logger.debug(f" Generating primary shape #{len(solids)}: {c2.attrib['ref']}")
             solid = self.get_mesh(c2.attrib['ref'])
             solid = gen_mesh.transform(solid, pos_val, rot_val)
             solids.appendleft(solid)
             curr = self.solid_map[c1.attrib['ref']]
-        print(f" Generating primary shape #{len(solids)}: {curr.attrib['name']}")
+        logger.debug(f" Generating primary shape #{len(solids)}: {curr.attrib['name']}")
         solids.appendleft(self.get_mesh(curr.attrib['name']))
-        print("All Primaries generated, balanced subtraction begins")
-        return helper.balanced_consecutive_subtraction(solids)
+        logger.debug("All Primaries generated, balanced subtraction begins")
+        if len(solids) > 2**6:
+            return helper.balanced_consecutive_subtraction(solids)
+        return helper.subtraction_via_balanced_union(solids)
 
+    def consecutive_union(self, solid_ref):
+        # Get all leaves
+        solids = deque()
+        curr = self.solid_map[solid_ref]
+        while self.n_consecutive_op(curr.attrib['name'], 'union')!=0:
+            c1 = curr.find('first')
+            c2 = curr.find('second')
+            assert c2.tag != 'union', 'not a pure union list'
+            pos, rot = self.get_pos_rot(curr)
+            pos_val = None
+            rot_val = None
+            if pos is not None:
+                pos_val = helper.get_vals(pos)
+            if rot is not None:
+                rot_val = helper.get_vals(rot)
+            logger.debug(f" Generating primary shape #{len(solids)}: {c2.attrib['ref']}")
+            solid = self.get_mesh(c2.attrib['ref'])
+            solid = gen_mesh.transform(solid, pos_val, rot_val)
+            solids.appendleft(solid)
+            curr = self.solid_map[c1.attrib['ref']]
+        logger.debug(f" Generating primary shape #{len(solids)}: {curr.attrib['name']}")
+        solids.appendleft(self.get_mesh(curr.attrib['name']))
+        logger.debug("All Primaries generated, balanced union begins")
+        return helper.balanced_consecutive_union(solids)
         
-
-
+        
     def _get_mesh(self,solid_ref):
         '''
         Build a PyMesh mesh for the solid identified by solid_ref if the named
@@ -204,11 +234,14 @@ class GDMLLoader:
         #     return self.mesh_cache[solid_ref]
         elem = self.solid_map[solid_ref]
         mesh_type = elem.tag
-        print(f"{str(len(self.solid_generated))+'/'+str(len(self.solid_map)):<12} {mesh_type:<15} {solid_ref:<100}", end='\n', flush=True)
-        print(self.get_mesh.cache_info())
-        if self.n_consecutive_subtractions(solid_ref) > 32: # special optimization for long chain of subtraction
-            print(f"Found subtraction chain of length {self.n_consecutive_subtractions(solid_ref)}, optimizing")
+        logger.debug(f"{str(len(self.solid_generated))+'/'+str(len(self.solid_map)):<12} {mesh_type:<15} {solid_ref:<100}")
+        # print(self.get_mesh.cache_info())
+        if self.n_consecutive_op(solid_ref, op='subtraction') > 8: # special optimization for long chain of subtraction
+            logger.debug(f"Found subtraction chain of length {self.n_consecutive_op(solid_ref, op='subtraction')}, optimizing")
             mesh = self.consecutive_subtraction(solid_ref)
+        elif self.n_consecutive_op(solid_ref, op='union') > 8:
+            logger.debug(f"Found union chain of length {self.n_consecutive_op(solid_ref, op='union')}, optimizing")
+            mesh = self.consecutive_union(solid_ref)
         elif mesh_type in ('union', 'subtraction', 'intersection'): # default boolean operations
             a = self.get_mesh(elem.find('first').get('ref'))
             b = self.get_mesh(elem.find('second').get('ref'))
@@ -219,8 +252,9 @@ class GDMLLoader:
             for i, entry in enumerate(posrot_entries):
                 if entry is not None:
                     posrot_vals[i] = helper.get_vals(entry)
-            
-            mesh = gen_mesh.gdml_boolean(a, b, mesh_type, firstpos=posrot_vals[0], firstrot=posrot_vals[1], pos=posrot_vals[2], rot=posrot_vals[3])
+            logger.debug(f"Performing {mesh_type} for {solid_ref}")
+            mesh = gen_mesh.gdml_boolean(a, b, mesh_type, firstpos=posrot_vals[0], firstrot=posrot_vals[1], 
+            pos=posrot_vals[2], rot=posrot_vals[3])
         else: # primaries
             dispatcher = {
                 'box':              helper.box,
@@ -267,10 +301,14 @@ class GDMLLoader:
                 z_rot = make_rotation_matrix(c_rot[2], [0, 0, 1])
                 c_rot = np.matmul(rot, np.matmul(x_rot, np.matmul(y_rot, z_rot))) #FIXME verify this order
                 q.append([child, c_pos, c_rot, v.material_ref])
+            classification, kwargs = volume_classifier(v.name, v.material_ref, parent_material_ref)
+            if classification == 'omit':
+                logger.debug(f"{v.solid_ref} is ommited.")
+                continue
+            logger.info(f"Generating mesh for {v.solid_ref}.")
             mesh = self.get_mesh(v.solid_ref)
             if mesh is None:
                 continue
-            classification, kwargs = volume_classifier(v.name, v.material_ref, parent_material_ref)
             if classification == 'pmt':
                 channel_type = kwargs.pop('channel_type',None)
                 solid = Solid(mesh, **kwargs)
@@ -278,8 +316,7 @@ class GDMLLoader:
             elif classification == 'solid':
                 solid = Solid(mesh, **kwargs)
                 detector.add_solid(solid, displacement=pos, rotation=rot)   
-            elif classification == 'omit':
-                pass
             else:
                 raise Exception('Unknown volume classification: '+classification)
+        logger.info("Detector geometry generation complete.")
         return detector

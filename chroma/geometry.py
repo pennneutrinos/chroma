@@ -42,7 +42,7 @@ class Mesh(object):
         if len(self.triangles) == 0:
             logger.warning("Generated mesh has no triangles.")
         if round:
-            self.vertices = self.vertices.round(decimals=10)
+            self.vertices = self.vertices.round(decimals=12)
         if remove_duplicate_vertices:
             self.remove_duplicate_vertices()
         if remove_null_triangles:
@@ -355,7 +355,7 @@ class Geometry(object):
             triangles[nt[i]:nt[i+1]] = solid.mesh.triangles + nv[i]
 
         # Different solids are very unlikely to share vertices, so this goes much faster
-        self.mesh = Mesh(vertices, triangles, remove_duplicate_vertices=False)
+        self.mesh = Mesh(vertices, triangles, remove_duplicate_vertices=True, remove_null_triangles=False)
 
         self.colors = np.concatenate([solid.color for solid in self.solids])
 
