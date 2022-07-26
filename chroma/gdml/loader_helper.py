@@ -3,6 +3,7 @@ import numpy as np
 from collections import deque
 
 from chroma.gdml import gen_mesh
+from chroma.log import logger
 
 ## Utility functions to connect the loader to gen_mesh
 _units = { 'cm':1, 'mm':0.1, 'm':100, 'deg':np.pi/180, 'rad':1 }
@@ -95,7 +96,8 @@ def balanced_consecutive_subtraction(solids:deque):
     '''
     Take a deque of solids, perform balanced subtraction that is equivalent to solids[0] - solids[1] - solids[2]...
     '''
-    print("Current number of solids: ", len(solids))
+    # print("Current number of solids: ", len(solids))
+    logger.debug('new layer')
     assert len(solids)!=0
     if len(solids) == 1:
         return solids[0]
@@ -103,7 +105,9 @@ def balanced_consecutive_subtraction(solids:deque):
     next_level = deque()
     a = solids.popleft()
     b = solids.popleft()
+    logger.debug("Subtracting")
     next_level.append(gen_mesh.gdml_boolean(a, b, 'subtraction'))
+    logger.debug("Subtraction Done")
     while solids:
         if len(solids) == 1:
             next_level.append(solids.pop())
@@ -111,4 +115,28 @@ def balanced_consecutive_subtraction(solids:deque):
             x = solids.popleft()
             y = solids.popleft()
             next_level.append(gen_mesh.gdml_boolean(x, y, 'union'))
+        logger.debug("Union Done")
     return balanced_consecutive_subtraction(next_level)
+
+def subtraction_via_balanced_union(solids:deque):
+    lhs = solids.popleft()
+    logger.debug("Performing unions...")
+    rhs = balanced_consecutive_union(solids)
+    logger.debug("Performing subtraction...")
+    result = gen_mesh.gdml_boolean(lhs, rhs, 'subtraction')
+    logger.debug("DONE!")
+    return result
+
+def balanced_consecutive_union(solids:deque):
+    assert len(solids)!=0
+    if len(solids) == 1:
+        return solids[0]
+    next_level = deque()
+    while solids:
+        if len(solids) == 1:
+            next_level.append(solids.pop())
+        else:
+            x = solids.popleft()
+            y = solids.popleft()
+            next_level.append(gen_mesh.gdml_boolean(x, y, 'union'))
+    return balanced_consecutive_union(next_level)
