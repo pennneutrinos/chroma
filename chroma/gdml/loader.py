@@ -28,7 +28,7 @@ def retrieve_mesh_from_gmsh():
 
 
 #To convert length and angle units to cm and radians
-units = { 'cm':10, 'mm':1, 'm':1000, 'deg':np.pi/180, 'rad':1 }
+units = { 'cm':1, 'mm':0.1, 'm':100, 'deg':np.pi/180, 'rad':1 }
 
 class Volume:
     '''
