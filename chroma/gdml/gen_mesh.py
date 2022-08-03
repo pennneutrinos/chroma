@@ -5,6 +5,7 @@ occ = gmsh.model.occ
 import numpy as np
 
 occ = gmsh.model.occ
+from chroma.log import logger
 
 
 def getTagsByDim(dimTags, dim):
@@ -22,6 +23,7 @@ def getDimTags(dim, tags):
     return result
 
 def gdml_transform(obj, pos=None, rot=None):
+    print(obj)
     if pos == None: 
         pos = [0., 0., 0.]
     if rot == None:
@@ -34,13 +36,16 @@ def gdml_transform(obj, pos=None, rot=None):
     return obj
 
 
-def gdml_boolean(a, b, op, pos=None, rot=None, firstpos=None, firstrot=None, deleteA=True, deleteB=True):
+def gdml_boolean(a, b, op, pos=None, rot=None, firstpos=None, firstrot=None, deleteA=True, deleteB=True, noUnion=False):
     a = gdml_transform(a, pos=firstpos, rot=firstrot)
     b = gdml_transform(b, pos=pos, rot=rot)
     if op in ('subtraction', 'difference'):
         result = occ.cut(getDimTags(3, a), getDimTags(3, b), removeObject=deleteA, removeTool=deleteB)
     elif op in ('union'):
-        result = occ.fuse(getDimTags(3, a), getDimTags(3, b), removeObject=deleteA, removeTool=deleteB)
+        if noUnion:
+            result = getDimTags(3, a) + getDimTags(3, b), None
+        else:
+            result = occ.fuse(getDimTags(3, a), getDimTags(3, b), removeObject=deleteA, removeTool=deleteB)
     elif op in ('intersection'):
         result = occ.intersect(getDimTags(3, a), getDimTags(3, b), removeObject=deleteA, removeTool=deleteB)
     else:
@@ -48,7 +53,7 @@ def gdml_boolean(a, b, op, pos=None, rot=None, firstpos=None, firstrot=None, del
     outDimTags, _ = result
     if len(outDimTags) == 0: return None
     if len(outDimTags) > 1:
-        print("WARNING: more than one object created by boolean operation.")
+        logger.info("Note: more than one object created by boolean operation.")
         return [DimTag[1] for DimTag in outDimTags]
     return outDimTags[0][1]
 

@@ -84,11 +84,15 @@ class GDMLLoader:
     if the GDML uses unsupported features.
     '''
     
-    def __init__(self, gdml_file, refinement_order=2):
+    def __init__(self, gdml_file, refinement_order=2, noUnionClassifier=None):
         ''' 
         Read a geometry from the specified GDML file.
         '''
         self.refinement_order = refinement_order
+        if noUnionClassifier is None:
+            self.noUnionClassifier = lambda _: False
+        else:
+            self.noUnionClassifier = noUnionClassifier
 
         self.gdml_file = gdml_file
         xml = et.parse(gdml_file)
@@ -174,8 +178,8 @@ class GDMLLoader:
             for i, entry in enumerate(posrot_entries):
                 if entry is not None:
                     posrot_vals[i] = helper.get_vals(entry)
-        
-            mesh = gen_mesh.gdml_boolean(a, b, mesh_type, firstpos=posrot_vals[0], firstrot=posrot_vals[1], pos=posrot_vals[2], rot=posrot_vals[3])
+            noUnion = self.noUnionClassifier(solid_ref)
+            mesh = gen_mesh.gdml_boolean(a, b, mesh_type, firstpos=posrot_vals[0], firstrot=posrot_vals[1], pos=posrot_vals[2], rot=posrot_vals[3], noUnion=noUnion)
             return mesh
         dispatcher = {
             'box':              helper.box,
