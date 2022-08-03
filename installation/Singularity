@@ -1,5 +1,5 @@
 Bootstrap: docker
-From: stjimmys/chroma3:nvidia.cuda10
+From: stjimmys/chroma3:nvidia.cuda10.ci
 
 %post
     apt-get -y update
