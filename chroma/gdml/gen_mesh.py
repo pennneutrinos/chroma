@@ -23,7 +23,6 @@ def getDimTags(dim, tags):
     return result
 
 def gdml_transform(obj, pos=None, rot=None):
-    print(obj)
     if pos == None: 
         pos = [0., 0., 0.]
     if rot == None:
