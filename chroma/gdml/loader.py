@@ -115,7 +115,8 @@ class GDMLLoader:
 
         ## Initialize gmsh
         gmsh.initialize()
-        gmsh.option.setNumber('Mesh.MeshSizeFromCurvature', 3)
+        gmsh.option.setNumber('Mesh.MeshSizeFromCurvature', 32) # number of meshes per 2*pi radian
+        gmsh.option.setNumber('Mesh.MinimumCircleNodes', 32) # number of nodes per circle
         gmsh.model.add(self.gdml_file)
 
         
