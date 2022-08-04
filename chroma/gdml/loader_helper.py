@@ -7,7 +7,7 @@ from chroma.log import logger
 from copy import deepcopy
 
 ## Utility functions to connect the loader to gen_mesh
-_units = { 'cm':1, 'mm':0.1, 'm':100, 'deg':np.pi/180, 'rad':1 }
+_units = { 'cm':10, 'mm':1, 'm':1000, 'deg':np.pi/180, 'rad':1 }
 
 def get_vals(elem, value_attr=['x', 'y', 'z'], default_vals=None, unit_attr='unit'):
     '''
