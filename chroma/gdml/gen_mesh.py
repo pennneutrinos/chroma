@@ -36,6 +36,17 @@ def gdml_transform(obj, pos=None, rot=None):
 
 
 def gdml_boolean(a, b, op, pos=None, rot=None, firstpos=None, firstrot=None, deleteA=True, deleteB=True, noUnion=False):
+    # Deal with all none objects
+    if op == 'union':
+        if a is None:
+            return b
+        if b is None:
+            return a
+    if op == 'subtraction':
+        assert a is not None, "Subtraction requires first object to be not None"
+        if b is None: return a #Subtracting nothing is a no-op
+    if op == 'intersection':
+        assert a is not None and b is not None, "Intersection requires both objects to be not None"
     a = gdml_transform(a, pos=firstpos, rot=firstrot)
     b = gdml_transform(b, pos=pos, rot=rot)
     if op in ('subtraction', 'difference'):
@@ -238,7 +249,6 @@ def gdml_eltube(dx, dy, dz):
         base_curve = occ.addEllipse(0, 0, -dz, dy, dx, zAxis=[0, 0, 1], xAxis=[0, 1, 0])
     base_curveLoop = occ.addCurveLoop([base_curve])
     base = occ.addPlaneSurface([base_curveLoop])
-    numElem = max(1, int(dz//100))
-    tube_tags_3d = getTagsByDim(occ.extrude([(2, base)], 0, 0, 2*dz, numElements=[numElem]), 3)
+    tube_tags_3d = getTagsByDim(occ.extrude([(2, base)], 0, 0, 2*dz), 3)
     assert len(tube_tags_3d) == 1, f'Generate {len(tube_tags_3d)} solids instead of 1.'
     return tube_tags_3d[0]
