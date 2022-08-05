@@ -84,16 +84,12 @@ class GDMLLoader:
     if the GDML uses unsupported features.
     '''
     
-    def __init__(self, gdml_file, refinement_order=1, noUnionClassifier=None):
+    def __init__(self, gdml_file, refinement_order=0):
         ''' 
         Read a geometry from the specified GDML file.
         '''
         self.refinement_order = refinement_order
-        if noUnionClassifier is None:
-            self.noUnionClassifier = lambda _: False
-        else:
-            self.noUnionClassifier = noUnionClassifier
-
+        
         self.gdml_file = gdml_file
         xml = et.parse(gdml_file)
         gdml = xml.getroot()
@@ -115,8 +111,8 @@ class GDMLLoader:
 
         ## Initialize gmsh
         gmsh.initialize()
-        gmsh.option.setNumber('Mesh.MeshSizeFromCurvature', 32) # number of meshes per 2*pi radian
-        gmsh.option.setNumber('Mesh.MinimumCircleNodes', 32) # number of nodes per circle
+        gmsh.option.setNumber('Mesh.MeshSizeFromCurvature', 16) # number of meshes per 2*pi radian
+        gmsh.option.setNumber('Mesh.MinimumCircleNodes', 16) # number of nodes per circle
         gmsh.model.add(self.gdml_file)
 
         
@@ -166,6 +162,9 @@ class GDMLLoader:
         If the tag of the solid is not yet implemented, or it uses features not
         yet implemented, this will raise an exception.
         '''
+        if self.solidsToIgnore(solid_ref):
+            logger.info(f"Ignoring solid: {solid_ref}")
+            return None
         logger.info(f"Generating Solid {solid_ref}")
         elem = self.solid_map[solid_ref]
         mesh_type = elem.tag
@@ -197,7 +196,7 @@ class GDMLLoader:
         mesh = generator(elem)
         return mesh
         
-    def build_detector(self, detector=None, volume_classifier=_default_volume_classifier):
+    def build_detector(self, detector=None, volume_classifier=_default_volume_classifier, solidsToIgnore=None, noUnion=None):
         '''
         Add the meshes defined by this GDML to the detector. If detector is not
         specified, a new detector will be created.
@@ -213,6 +212,19 @@ class GDMLLoader:
         '''
         if detector is None:
             detector = Detector(vacuum)
+        if solidsToIgnore is None: # by default ignore nothing
+            self.solidsToIgnore = lambda _: False
+        if type(solidsToIgnore) is list:
+            self.solidsToIgnore = lambda ref: True if ref in solidsToIgnore else False
+        else:
+            self.solidsToIgnore=solidsToIgnore
+
+        if noUnion is None:
+            self.noUnionClassifier = lambda _: False
+        if type(noUnion) is list:
+            self.noUnionClassifier = lambda ref: True if ref in noUnion else False
+        else:
+            self.noUnionClassifier = noUnion
         q = deque()
         q.append([self.world, np.zeros(3), np.identity(3), None])
         while len(q):
