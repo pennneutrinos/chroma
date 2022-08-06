@@ -111,8 +111,8 @@ class GDMLLoader:
 
         ## Initialize gmsh
         gmsh.initialize()
-        gmsh.option.setNumber('Mesh.MeshSizeFromCurvature', 16) # number of meshes per 2*pi radian
-        gmsh.option.setNumber('Mesh.MinimumCircleNodes', 16) # number of nodes per circle
+        gmsh.option.setNumber('Mesh.MeshSizeFromCurvature', 32) # number of meshes per 2*pi radian
+        gmsh.option.setNumber('Mesh.MinimumCircleNodes', 32) # number of nodes per circle
         gmsh.model.add(self.gdml_file)
 
         
@@ -214,15 +214,11 @@ class GDMLLoader:
             detector = Detector(vacuum)
         if solidsToIgnore is None: # by default ignore nothing
             self.solidsToIgnore = lambda _: False
-        if type(solidsToIgnore) is list:
-            self.solidsToIgnore = lambda ref: True if ref in solidsToIgnore else False
         else:
             self.solidsToIgnore=solidsToIgnore
 
         if noUnion is None:
             self.noUnionClassifier = lambda _: False
-        if type(noUnion) is list:
-            self.noUnionClassifier = lambda ref: True if ref in noUnion else False
         else:
             self.noUnionClassifier = noUnion
         q = deque()
