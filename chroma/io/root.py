@@ -346,10 +346,12 @@ class RootWriter(object):
                               photons.wavelengths, photons.t,
                               photons.last_hit_triangles, photons.flags, 
                               photons.channel)
+        else:
+            self.ev.photon_tracks.resize(0)
+        if pyev.photon_parent_trackids is not None:
             self.ev.photon_parent_trackids.resize(len(pyev.photon_parent_trackids))
             np.asarray(self.ev.photon_parent_trackids)[:] = pyev.photon_parent_trackids
         else:
-            self.ev.photon_tracks.resize(0)
             self.ev.photon_parent_trackids.resize(0)
         
         if pyev.vertices is not None:
