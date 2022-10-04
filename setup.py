@@ -2,19 +2,19 @@ from setuptools import setup, find_packages, Extension
 import subprocess
 import os
 
-libraries = ['boost_python','boost_numpy']
+libraries = ['boost_python3','boost_numpy3']
 extra_objects = []
 
 if 'VIRTUAL_ENV' in os.environ:
     # use local copy of boost libs
-    boost_lib = os.path.join(os.environ['VIRTUAL_ENV'],'lib','libboost_python.so')
+    boost_lib = os.path.join(os.environ['VIRTUAL_ENV'],'lib','libboost_python3.so')
     if os.path.exists(boost_lib):
         extra_objects.append(boost_lib)
-        libraries.remove('boost_python')
-    boost_lib = os.path.join(os.environ['VIRTUAL_ENV'],'lib','libboost_numpy.so')
+        libraries.remove('boost_python3')
+    boost_lib = os.path.join(os.environ['VIRTUAL_ENV'],'lib','libboost_numpy3.so')
     if os.path.exists(boost_lib):
         extra_objects.append(boost_lib)
-        libraries.remove('boost_numpy')
+        libraries.remove('boost_numpy3')
 
 def check_output(*popenargs, **kwargs):
     if 'stdout' in kwargs:

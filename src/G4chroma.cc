@@ -7,6 +7,7 @@
 #include <G4TrajectoryContainer.hh>
 #include "G4SystemOfUnits.hh"
 #include "G4PhysicalConstants.hh"
+#include "G4OpticalParameters.hh"
 #include <G4Alpha.hh>
 #include <G4Neutron.hh>
 
@@ -22,8 +23,10 @@ ChromaPhysicsList::ChromaPhysicsList():  G4VModularPhysicsList()
   // General Physics
   RegisterPhysics( new G4EmPenelopePhysics(0) );
   // Optical Physics w/o Scintillation
+  auto opticalParams = G4OpticalParameters::Instance();
+  opticalParams->SetProcessActivation("Scintillation",false);
+
   G4OpticalPhysics* opticalPhysics = new G4OpticalPhysics();
-  opticalPhysics->Configure(kScintillation,false);
   RegisterPhysics( opticalPhysics );
   // Scintillation (handled by stepping!)
   new GLG4Scint(); 
