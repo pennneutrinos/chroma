@@ -43,10 +43,14 @@ def flat(e_lo, e_hi):
 
 def particle_gun(particle_name_iter, pos_iter, dir_iter, ke_iter, 
                  t0_iter=constant(0.0), start_id=0):
+    print("Gun Do Call")
     for i, particle_name, pos, dir, ke, t0 in zip(count(start_id), particle_name_iter, pos_iter, dir_iter, ke_iter, t0_iter):
         dir = dir/norm(dir)
+        print("dir", dir)
         vertex = event.Vertex(particle_name, pos, dir, ke, t0=t0)
+        print("vertex", vertex)
         ev_vertex = event.Event(i, vertex, [vertex])
+        print("ev_vertex", ev_vertex)
         yield ev_vertex
 
 def pi0_gun(pos_iter, dir_iter, ke_iter, t0_iter=constant(0.0), start_id=0, gamma1_dir_iter=None):

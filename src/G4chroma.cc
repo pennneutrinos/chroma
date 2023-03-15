@@ -227,119 +227,79 @@ PhotonCopy(double,GetT0,t0[i])
 PhotonCopy(uint32_t,GetFlags,flags[i])
 PhotonCopy(int,GetParentTrackID,parentTrackID[i])
 
-#include <boost/python.hpp>
-#include <boost/python/numpy.hpp>
+#include <pybind11/pybind11.h>
+#include <pybind11/numpy.h>
 
-namespace p = boost::python;
-namespace np = boost::python::numpy;
+namespace py = pybind11;
 
-#define PhotonAccessor(type,name,accessor) \
-np::ndarray PTA_##name(const TrackingAction *pta) { \
-    np::ndarray r = np::empty(p::make_tuple(pta->GetNumPhotons()),np::dtype::get_builtin<type>()); \
-    pta->accessor((type*)r.get_data()); \
-    return r; \
+template <typename T, void (TrackingAction::*Method)(T*) const>
+py::array_t<T> PhotonAccessor(const TrackingAction *pta) {
+  py::array_t<T> r(pta->GetNumPhotons());
+  (pta->*Method)((T*)r.request().ptr );
+  return r;
 }
 
-PhotonAccessor(double,GetX,GetX)
-PhotonAccessor(double,GetY,GetY)
-PhotonAccessor(double,GetZ,GetZ)
-PhotonAccessor(double,GetDirX,GetDirX)
-PhotonAccessor(double,GetDirY,GetDirY)
-PhotonAccessor(double,GetDirZ,GetDirZ)
-PhotonAccessor(double,GetPolX,GetPolX)
-PhotonAccessor(double,GetPolY,GetPolY)
-PhotonAccessor(double,GetPolZ,GetPolZ)
-PhotonAccessor(double,GetWave,GetWavelength)
-PhotonAccessor(double,GetT0,GetT0)
-PhotonAccessor(uint32_t,GetFlags,GetFlags)
-PhotonAccessor(int,GetParentTrackID,GetParentTrackID)
-
-#define StepAccessor(type,name,stepvar) \
-np::ndarray PTA_##name(Track *pta) { \
-    const vector<Step> &steps = pta->getSteps(); \
-    const size_t sz = steps.size(); \
-    np::ndarray r = np::empty(p::make_tuple(sz),np::dtype::get_builtin<type>()); \
-    for (size_t i = 0; i < sz; i++) r[i] = steps[i].stepvar; \
-    return r; \
+template <typename T, const T (Step::*Method)>
+py::array_t<T> StepAccessor(Track *pta) {
+  const vector<Step> &steps = pta->getSteps();
+  py::array_t<T> r(steps.size());
+  T* np_ptr = (T*)r.request().ptr;
+  for (size_t i=0; i < steps.size(); i++){
+    np_ptr[i] = steps[i].*Method;
+  }
+  return r;
 }
-    
-StepAccessor(double,getStepX,x)
-StepAccessor(double,getStepY,y)
-StepAccessor(double,getStepZ,z)
-StepAccessor(double,getStepT,t)
-StepAccessor(double,getStepDX,dx)
-StepAccessor(double,getStepDY,dy)
-StepAccessor(double,getStepDZ,dz)
-StepAccessor(double,getStepKE,ke)
-StepAccessor(double,getStepEDep,edep)
-StepAccessor(double,getStepQEDep,qedep)
-//StepAccessor(std::string,getStepProcess,procname)
 
-using namespace boost::python;
-
-void export_Chroma()
+PYBIND11_MODULE(_g4chroma, mod)
 {
-  class_<ChromaPhysicsList, ChromaPhysicsList*, bases<G4VModularPhysicsList>, boost::noncopyable > ("ChromaPhysicsList", "EM+Optics physics list")
-    .def(init<>())
-    ;
+  py::class_<ChromaPhysicsList, G4VModularPhysicsList>(mod, "ChromaPhysicsList")
+    .def(py::init<>());
     
-    
-  class_<Track, Track*, boost::noncopyable> ("Track", "Particle track")
-    .def(init<>())
+  py::class_<Track>(mod, "Track")
+    .def(py::init<>())
     .def_readonly("track_id",&Track::id)
     .def_readonly("parent_track_id",&Track::parent_id)
     .def_readonly("pdg_code",&Track::pdg_code)
     .def_readonly("weight",&Track::weight)
     .def_readonly("name",&Track::name)
     .def("getNumSteps",&Track::getNumSteps)
-    .def("getStepX",PTA_getStepX)
-    .def("getStepY",PTA_getStepY)
-    .def("getStepZ",PTA_getStepZ)
-    .def("getStepT",PTA_getStepT)
-    .def("getStepDX",PTA_getStepDX)
-    .def("getStepDY",PTA_getStepDY)
-    .def("getStepDZ",PTA_getStepDZ)
-    .def("getStepKE",PTA_getStepKE)
-    .def("getStepEDep",PTA_getStepEDep)
-    .def("getStepQEDep",PTA_getStepQEDep)
+    .def("getStepX",StepAccessor<double, &Step::x>)
+    .def("getStepY",StepAccessor<double, &Step::y>)
+    .def("getStepZ",StepAccessor<double, &Step::z>)
+    .def("getStepT",StepAccessor<double, &Step::t>)
+    .def("getStepDX",StepAccessor<double, &Step::dx>)
+    .def("getStepDY",StepAccessor<double, &Step::dy>)
+    .def("getStepDZ",StepAccessor<double, &Step::dz>)
+    .def("getStepKE",StepAccessor<double, &Step::ke>)
+    .def("getStepEDep",StepAccessor<double, &Step::edep>)
+    .def("getStepQEDep",StepAccessor<double, &Step::qedep>)
     //.def("getStepProcess",PTA_getStepProcess)
     .def("getNumChildren",&Track::getNumChildren)
-    .def("getChildTrackID",&Track::getChildTrackID)
-    ;  
+    .def("getChildTrackID",&Track::getChildTrackID);
+  
+  py::class_<TrackingAction, G4UserTrackingAction>(mod, "TrackingAction")
+    .def(py::init<>())
+    .def("GetNumPhotons", &TrackingAction::GetNumPhotons)
+    .def("Clear", &TrackingAction::Clear)
+    .def("GetX", PhotonAccessor<double, &TrackingAction::GetX>)
+    .def("GetY", PhotonAccessor<double, &TrackingAction::GetY>)
+    .def("GetZ", PhotonAccessor<double, &TrackingAction::GetZ>)
+    .def("GetDirX", PhotonAccessor<double, &TrackingAction::GetDirX>)
+    .def("GetDirY", PhotonAccessor<double, &TrackingAction::GetDirY>)
+    .def("GetDirZ", PhotonAccessor<double, &TrackingAction::GetDirZ>)
+    .def("GetPolX", PhotonAccessor<double, &TrackingAction::GetPolX>)
+    .def("GetPolY", PhotonAccessor<double, &TrackingAction::GetPolY>)
+    .def("GetPolZ", PhotonAccessor<double, &TrackingAction::GetPolZ>)
+    .def("GetWavelength", PhotonAccessor<double, &TrackingAction::GetWavelength>)
+    .def("GetT0", PhotonAccessor<double, &TrackingAction::GetT0>)
+    .def("GetParentTrackID", PhotonAccessor<int, &TrackingAction::GetParentTrackID>)
+    .def("GetFlags", PhotonAccessor<uint32_t, &TrackingAction::GetFlags>);
 
-  class_<SteppingAction, SteppingAction*, bases<G4UserSteppingAction>,
-	 boost::noncopyable > ("SteppingAction", "Stepping action for hacking purposes")
-    .def(init<>())
+  py::class_<SteppingAction, G4UserSteppingAction>(mod, "SteppingAction")
+    .def(py::init<>())
     .def("EnableScint",&SteppingAction::EnableScint)
     .def("EnableTracking",&SteppingAction::EnableTracking)
     .def("ClearTracking",&SteppingAction::ClearTracking)
-    .def("getTrack",&SteppingAction::getTrack,return_value_policy<reference_existing_object>())
-    ;  
-  
-  class_<TrackingAction, TrackingAction*, bases<G4UserTrackingAction>,
-	 boost::noncopyable > ("TrackingAction", "Tracking action that saves photons")
-    .def(init<>())
-    .def("GetNumPhotons", &TrackingAction::GetNumPhotons)
-    .def("Clear", &TrackingAction::Clear)
-    .def("GetX", PTA_GetX)
-    .def("GetY", PTA_GetY)
-    .def("GetZ", PTA_GetZ)
-    .def("GetDirX", PTA_GetDirX)
-    .def("GetDirY", PTA_GetDirY)
-    .def("GetDirZ", PTA_GetDirZ)
-    .def("GetPolX", PTA_GetPolX)
-    .def("GetPolY", PTA_GetPolY)
-    .def("GetPolZ", PTA_GetPolZ)
-    .def("GetWavelength", PTA_GetWave)
-    .def("GetT0", PTA_GetT0)
-    .def("GetParentTrackID", PTA_GetParentTrackID)
-    .def("GetFlags", PTA_GetFlags)
-    ;
-}
-
-BOOST_PYTHON_MODULE(_g4chroma)
-{
-  Py_Initialize();
-  np::initialize();
-  export_Chroma();
+    //.def("getTrack",&SteppingAction::getTrack,return_value_policy<reference_existing_object>())
+    .def("getTrack",&SteppingAction::getTrack);
 }

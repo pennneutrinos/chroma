@@ -176,12 +176,14 @@ def solid_polyhedra(startphi, deltaphi, numsides, r_list, z_list):
     occ.rotate(getDimTags(3, result), 0, 0, 0, 0, 0, 1, startphi)
     return result
 
-
+import time
 
 def gdml_polyhedra(startphi, deltaphi, numsides, zplane):
     # First vertex is on the positive X half-axis.
     # Specified radius is distance from center to the middle of the edge
+    print("do sort")
     zplane = sorted(zplane, key=lambda p: p['z'])
+    print("done sort")
     segment_list = []
     for pa, pb in zip(zplane, zplane[1:]):
         rmax_list = pa['rmax'], pb['rmax']
@@ -194,9 +196,29 @@ def gdml_polyhedra(startphi, deltaphi, numsides, zplane):
         else:
             segment_list.append(gdml_boolean(outer_solid, inner_solid, op='subtraction'))
     result = segment_list[0]
-    for segment in segment_list[1:]:
-        result = gdml_boolean(result, segment, op='union')
+    index = 0
+    total = len(segment_list)
+    beginTime = time.time()
+    #for segment in segment_list[1:]:
+    #    result = gdml_boolean(result, segment, op='union')
+
     # occ.rotate(getDimTags(3, result), 0, 0, 0, 0, 0, 1, startphi)
+    # Going to try map-reduce style merging
+    def reducedList(segs):
+        z = len(segs)//2
+        print(z)
+        returnedList = []
+        odds = segs[::2][:z]
+        evens = segs[1::2][:z]
+        for (o,e) in zip(odds, evens):
+            returnedList.append( gdml_boolean(o, e, op='union') )
+        if len(segs)%2:
+            returnedList.append(segs[-1])
+        if len(returnedList) > 1:
+            returnedList = reducedList(returnedList)
+        return returnedList
+    result = reducedList(segment_list)
+    print("TotalTime:", time.time()-beginTime)
     return result
 
 

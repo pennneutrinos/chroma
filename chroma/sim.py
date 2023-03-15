@@ -141,24 +141,31 @@ class Simulation(object):
     def simulate(self, iterable, keep_photons_beg=False, keep_photons_end=False,
                  keep_hits=True, keep_flat_hits=True, run_daq=False, max_steps=1000,
                  photons_per_batch=1000000):
+        print("Begin Simulate")
         if isinstance(iterable, event.Photons):
             first_element, iterable = iterable, [iterable]
+            print("A")
         else:
             first_element, iterable = itertoolset.peek(iterable)
+            print("B")
 
         if isinstance(first_element, event.Event):
             iterable = self.photon_generator.generate_events(iterable)
+            print("1")
         elif isinstance(first_element, event.Photons):
             iterable = (event.Event(photons_beg=x) for x in iterable)
+            print("2")
         elif isinstance(first_element, event.Vertex):
             iterable = (event.Event(vertices=[vertex]) for vertex in iterable)
             iterable = self.photon_generator.generate_events(iterable)
+            print("3")
 
         nphotons = 0
         batch_events = []
         
+        print("hi > ", iterable)
         for ev in iterable:
-            
+            print(f"nphotons: {len(ev.photons_beg)}")
             ev.nphotons = len(ev.photons_beg)
             ev.photons_beg.evidx[:] = len(batch_events)
             
@@ -175,7 +182,7 @@ class Simulation(object):
                                                 run_daq=run_daq, max_steps=max_steps)
                 nphotons = 0
                 batch_events = []
-                
+        print(" pass " )        
         if len(batch_events) != 0:
             yield from self._simulate_batch(batch_events,
                                             keep_photons_beg=keep_photons_beg,

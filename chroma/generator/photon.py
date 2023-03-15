@@ -1,9 +1,12 @@
-
 import multiprocessing
 import numpy as np
 import threading
 import zmq
 import uuid
+import os, sys
+sdir = os.path.dirname(__file__)
+sys.path.append(sdir)
+import g4gen
 
 class G4GeneratorProcess(multiprocessing.Process):
     def __init__(self, idnum, material, vertex_socket_address, photon_socket_address, seed=None, tracking=False):
@@ -18,14 +21,19 @@ class G4GeneratorProcess(multiprocessing.Process):
         self.daemon = True
 
     def run(self):
-        from . import g4gen
+        print("process do run 1")
         gen = g4gen.G4Generator(self.material, seed=self.seed)
+        print("process do run 2")
         context = zmq.Context()
+        print("process do run 3")
         vertex_socket = context.socket(zmq.PULL)
         vertex_socket.connect(self.vertex_socket_address)
+        print("process do run 4")
         photon_socket = context.socket(zmq.PUSH)
         photon_socket.connect(self.photon_socket_address)
 
+
+        print("process do send")
         # Signal with the photon socket that we are online
         # and ready for messages.
         photon_socket.send(b'READY')
@@ -88,14 +96,19 @@ class G4ParallelGenerator(object):
         self.processes_initialized = False
     
     def generate_events(self, vertex_iterator):
+        print('M> G4PG Gen')
         if not self.processes_initialized:
             # Verify everyone is running and connected to avoid
             # sending all the events to one client.
+            print(f'Init proc now count is {len(self.processes)}')
             for i in range(len(self.processes)):
+                print(f'Chillin for msg {i}')
                 msg = self.photon_socket.recv()
+                print(f'Got msg: {msg}')
                 assert msg == b'READY'
             self.processes_initialized = True
             
+        print('boink')
         #let it get ahead, but not too far ahead
         self.semaphore = threading.Semaphore(2*len(self.processes)) 
         self.processed = 0

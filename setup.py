@@ -1,4 +1,5 @@
 from setuptools import setup, find_packages, Extension
+from pybind11.setup_helpers import Pybind11Extension
 import subprocess
 import os
 
@@ -15,6 +16,9 @@ if 'VIRTUAL_ENV' in os.environ:
     if os.path.exists(boost_lib):
         extra_objects.append(boost_lib)
         libraries.remove('boost_numpy3')
+
+#libraries = ['libboost_numpy3.so', 'libboost_python3.so']
+#extra_objects = ['libboost_numpy3.so', 'libboost_python3.so']
 
 def check_output(*popenargs, **kwargs):
     if 'stdout' in kwargs:
@@ -44,15 +48,15 @@ include_dirs=['src']
 
 if 'VIRTUAL_ENV' in os.environ:
     include_dirs.append(os.path.join(os.environ['VIRTUAL_ENV'], 'include'))
-try:
-    import numpy.distutils
-    include_dirs += numpy.distutils.misc_util.get_numpy_include_dirs()
-except:
-    pass # if numpy doesn't exist yet
+#try: --> Deprecated
+#    import numpy.distutils
+#    include_dirs += numpy.distutils.misc_util.get_numpy_include_dirs()
+#except:
+#    pass # if numpy doesn't exist yet
 
 setup(
     name = 'Chroma',
-    version = '0.5',
+    version = '0.5.1',
     packages = find_packages(),
     include_package_data=True,
 
@@ -60,25 +64,25 @@ setup(
                'bin/chroma-geo', 'bin/chroma-bvh',
                'bin/chroma-server'],
     ext_modules = [
-        Extension('chroma.generator._g4chroma',
+        Pybind11Extension('chroma.generator._g4chroma',
                   ['src/G4chroma.cc','src/GLG4Scint.cc'],
                   include_dirs=include_dirs,
-                  extra_compile_args=['--std=c++11']+geant4_cflags,
+                  extra_compile_args=['--std=c++17']+geant4_cflags,
                   extra_link_args=geant4_libs+clhep_libs,
                   extra_objects=extra_objects,
-                  libraries=libraries,
+                  #libraries=libraries,
                   ),
-        Extension('chroma.generator.mute',
+        Pybind11Extension('chroma.generator.mute',
                   ['src/mute.cc'],
                   include_dirs=include_dirs,
                   extra_compile_args=geant4_cflags,
                   extra_link_args=geant4_libs+clhep_libs,
-                  extra_objects=extra_objects,
-                  libraries=libraries),
+                  extra_objects=extra_objects,)
+                  #libraries=libraries),
         ],
  
     setup_requires = [],
-    install_requires = ['uncertainties','pyzmq', 'pycuda', 
+    install_requires = ['uncertainties','pyzmq', 'pycuda', 'geant4-pybind',
                         'numpy>=1.6', 'pygame', 'nose', 'sphinx'],
     #test_suite = 'nose.collector',
     

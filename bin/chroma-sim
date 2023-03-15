@@ -6,7 +6,7 @@ from chroma.tools import profile_if_possible
 def main():
     import optparse
     import sys
-    import imp
+    import importlib
     import os
     import inspect
     import numpy as np
@@ -37,7 +37,7 @@ def main():
     parser.add_option('-s', type='int', dest='seed',
                       help='random number generator seed')
     parser.add_option('-g', type='int', dest='ngenerators',
-                      help='number of GEANT4 processes', default=4)
+                      help='number of GEANT4 processes', default=1)
     parser.add_option('-n', '--nevents', type='int', dest='nevents',
                       default=100)
     parser.add_option('-p', '--particle', dest='particle',
@@ -88,15 +88,18 @@ def main():
                                    pos=pos, dir=dir, ke=options.ke)
 
     sim = Simulation(detector, seed=options.seed, cuda_device=options.device,
-                     geant4_processes=options.ngenerators)
+                     geant4_processes=options.ngenerators, nthreads_per_block=1)
     
     print('RNG seed: %i' % sim.seed)
 
     writer = root.RootWriter(options.output_filename)
 
+    print('Writer setup')
+
     start = time.time()
+    print('Beginning Simulation')
     for i, ev in \
-            enumerate(sim.simulate(itertools.islice(ev_gen, 
+        enumerate(sim.simulate(itertools.islice(ev_gen, 
                                                     options.nevents),
                                    keep_photons_beg=options.save_photons_beg,
                                    keep_photons_end=options.save_photons_end)):

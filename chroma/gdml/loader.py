@@ -14,6 +14,9 @@ from chroma.gdml import loader_helper as helper
 from chroma.gdml import gen_mesh
 import gmsh
 
+def mprint(*words):
+    # Delete this after debugging
+    print("\033[93mDebug>",*words,"\033[0m")
     
 def generate_mesh_from_obj():
     elementTags, nodeTags = gmsh.model.mesh.getElementsByType(2)
@@ -69,7 +72,16 @@ class Volume:
 from chroma.demo.optics import vacuum
 def _default_volume_classifier(volume_ref, material_ref, parent_material_ref):
     '''This is an example volume classifier, primarily for visualization'''
-    if 'OpDetSensitive' in volume_ref:
+    #if 'OpDetSensitive' in volume_ref:
+    ## MORGAN: Adjust later, color here just for tests
+    mprint(volume_ref)
+    if 'pmts_body' in volume_ref:
+        return 'pmt',dict(material1=vacuum, material2=vacuum, color=0xA0A05000, surface=None, channel_type=0)
+    elif 'pmts_inner1' in volume_ref:
+        return 'pmt',dict(material1=vacuum, material2=vacuum, color=0xA023a000, surface=None, channel_type=0)
+    elif 'pmts_inner2' in volume_ref:
+        return 'pmt',dict(material1=vacuum, material2=vacuum, color=0xA0008da0, surface=None, channel_type=0)
+    elif 'pmts_dynode' in volume_ref:
         return 'pmt',dict(material1=vacuum, material2=vacuum, color=0xA0A05000, surface=None, channel_type=0)
     elif material_ref == parent_material_ref:
         return 'omit',dict()
@@ -100,10 +112,12 @@ class GDMLLoader:
         
         solids = gdml.find('solids')
         self.solid_map = { solid.get('name'):solid for solid in solids }
+        mprint(self.solid_map.keys())
         
         structure = gdml.find('structure')
         volumes = structure.findall('volume')
         self.vol_map = { v.get('name'):v for v in volumes }
+        mprint(self.vol_map.keys())
         
         world_ref = gdml.find('setup').find('world').get('ref')
         self.world = Volume(world_ref, self)
@@ -162,12 +176,14 @@ class GDMLLoader:
         If the tag of the solid is not yet implemented, or it uses features not
         yet implemented, this will raise an exception.
         '''
+        mprint("get_mesh",solid_ref)
         if self.solidsToIgnore(solid_ref):
             logger.info(f"Ignoring solid: {solid_ref}")
             return None
         logger.info(f"Generating Solid {solid_ref}")
         elem = self.solid_map[solid_ref]
         mesh_type = elem.tag
+        mprint(f'mesh_type: {mesh_type}')
         if mesh_type in ('union', 'subtraction', 'intersection'):
             a = self.get_mesh(elem.find('first').get('ref'))
             b = self.get_mesh(elem.find('second').get('ref'))
@@ -192,8 +208,11 @@ class GDMLLoader:
             'tube':             helper.tube,
             'opticalsurface':   helper.ignore,
         }
+        mprint("one")
         generator = dispatcher.get(mesh_type, helper.notImplemented)
+        mprint("two")
         mesh = generator(elem)
+        mprint("three")
         return mesh
         
     def build_detector(self, detector=None, volume_classifier=_default_volume_classifier, solidsToIgnore=None, noUnion=None):
@@ -210,6 +229,7 @@ class GDMLLoader:
         'solid' will add a normal solid to the Chroma geometry, calls add_solid
         'omit' will not add the Solid to the Chroma geometry
         '''
+        mprint("build_detector called on", detector)
         if detector is None:
             detector = Detector(vacuum)
         if solidsToIgnore is None: # by default ignore nothing
@@ -235,6 +255,7 @@ class GDMLLoader:
                 c_rot = np.matmul(rot, np.matmul(x_rot, np.matmul(y_rot, z_rot))) #FIXME verify this order
                 q.append([child, c_pos, c_rot, v.material_ref])
             classification, kwargs = volume_classifier(v.name, v.material_ref, parent_material_ref)
+            mprint(f" build_detector -> {v.name}, class:{classification}")
             if classification == 'omit':
                 logger.debug(f"Volume {v.name} is omitted.")
                 continue

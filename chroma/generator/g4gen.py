@@ -1,17 +1,26 @@
+print("1")
 from chroma.generator.mute import *
 
+print("2")
 import numpy as np
 from chroma.event import Photons, Vertex, Steps
 from chroma.tools import argsort_direction
 
+print("3 ... how did we get here??-")
 #g4mute()
-from Geant4 import *
+#from Geant4 import *
+#from geant4_pybind import *
+#from geant4_pybind import G4ParticleGun, G4Material, G4MaterialPropertiesTable, G4VModularPhysicsList
+from geant4_pybind import G4VModularPhysicsList
+print("4")
 #g4unmute()
-import g4py.ezgeom
-import g4py.NISTmaterials
-import g4py.ParticleGun
+#import g4py.ezgeom
+#import g4py.NISTmaterials
+#import g4py.ParticleGun
 from chroma.generator import _g4chroma
+print("5")
 import chroma.geometry as geometry
+print("6")
 
 def add_prop(prop_table,name,material,prop_str,option=None):
     if prop_str not in material.__dict__:
@@ -43,6 +52,7 @@ def create_g4material(material):
     
     # Add properties necessary for primary scintillation generation
     prop_table = G4MaterialPropertiesTable()
+    #prop_table = g4material.GetMaterialPropertiesTable()
     add_prop(prop_table,'RINDEX',material,'refractive_index',option='wavelength')
     add_prop(prop_table,'SCINTILLATION',material,'scintillation_spectrum',option='dy_dwavelength')
     add_prop(prop_table,'SCINTWAVEFORM',material,'scintillation_waveform') #could be a PDF but this requires time constants
@@ -76,30 +86,39 @@ class G4Generator(object):
                Random number generator seed for HepRandom. If None, generator
                is not seeded.
         """
+        print("In Gen 0")
         if seed is not None:
             HepRandom.setTheSeed(seed)
         
-        g4py.NISTmaterials.Construct()
+        #g4py.NISTmaterials.Construct()
         
+        print("In Gen 1")
         if isinstance(material,geometry.Material):
         
             self.world_material = create_g4material(material)
-            g4py.ezgeom.Construct()
+            #g4py.ezgeom.Construct()
             
-            g4py.ezgeom.SetWorldMaterial(self.world_material)
-            g4py.ezgeom.ResizeWorld(100*m, 100*m, 100*m)
+            #g4py.ezgeom.SetWorldMaterial(self.world_material)
+            #g4py.ezgeom.ResizeWorld(100*m, 100*m, 100*m)
+            #self.world = g4py.ezgeom.G4EzVolume('world')
 
-            self.world = g4py.ezgeom.G4EzVolume('world')
-            self.world.CreateBoxVolume(self.world_material, 100*m, 100*m, 100*m)
-            self.world.PlaceIt(G4ThreeVector(0,0,0))
+            #self.world.CreateBoxVolume(self.world_material, 100*m, 100*m, 100*m)
+            solid = G4Box('world', 100*m, 100*m, 100*m)
+            lv = G4LogicalVolume(solid, self.world_material, 'world')
+            aworld = G4PVPlacement(0, G4ThreeVector(0, 0, 0), "world", lv, 0, false, 0)
+            ## EzGeom is gone?
+            self.world = aworld
+            print("In Gen 2")
             
         else:
             #material is really a function to build the geometry
             self.world = material()
         
+        print("In Gen 3")
         self.physics_list = _g4chroma.ChromaPhysicsList()
         gRunManager.SetUserInitialization(self.physics_list)
-        self.particle_gun = g4py.ParticleGun.Construct()    
+        self.particle_gun = G4ParticleGun()
+        print("In Gen 4")
             
         self.stepping_action = _g4chroma.SteppingAction()
         gRunManager.SetUserAction(self.stepping_action)
@@ -107,6 +126,7 @@ class G4Generator(object):
         gRunManager.SetUserAction(self.tracking_action)
         #g4mute()
         gRunManager.Initialize()
+        print("In Gen 5")
         #g4unmute()
         # preinitialize the process by running a simple event
         self.generate_photons([Vertex('e-', (0,0,0), (1,0,0), 0.5, 1.0)], mute=True)

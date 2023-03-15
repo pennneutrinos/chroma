@@ -25,17 +25,11 @@ void mute_g4unmute() {
 }
 
 
-#include <boost/python.hpp>
+#include <pybind11/pybind11.h>
 
-using namespace boost::python;
-
-void export_mute()
+PYBIND11_MODULE(mute, mod)
 {
-  def("g4mute", mute_g4mute, default_call_policies(), "Silence all GEANT4 output");
-  def("g4unmute", mute_g4unmute, default_call_policies(), "Re-enable GEANT4 output after calling ``g4mute()``.");
-}
-
-BOOST_PYTHON_MODULE(mute)
-{
-  export_mute();
+  mod.doc() = "Geant4 Mute";
+  mod.def("g4mute", mute_g4mute);
+  mod.def("g4unmute", mute_g4unmute);
 }
