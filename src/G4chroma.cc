@@ -252,9 +252,18 @@ py::array_t<T> StepAccessor(Track *pta) {
 
 PYBIND11_MODULE(_g4chroma, mod)
 {
+  py::class_<G4VModularPhysicsList>(mod, "G4VModularPhysicsList")
+    .def(py::init<>());
+
+  py::class_<G4UserTrackingAction>(mod, "G4UserTrackingAction")
+    .def(py::init<>());
+
+  py::class_<G4UserSteppingAction>(mod, "G4UserSteppingAction")
+    .def(py::init<>());
+
   py::class_<ChromaPhysicsList, G4VModularPhysicsList>(mod, "ChromaPhysicsList")
     .def(py::init<>());
-    
+
   py::class_<Track>(mod, "Track")
     .def(py::init<>())
     .def_readonly("track_id",&Track::id)
@@ -273,7 +282,6 @@ PYBIND11_MODULE(_g4chroma, mod)
     .def("getStepKE",StepAccessor<double, &Step::ke>)
     .def("getStepEDep",StepAccessor<double, &Step::edep>)
     .def("getStepQEDep",StepAccessor<double, &Step::qedep>)
-    //.def("getStepProcess",PTA_getStepProcess)
     .def("getNumChildren",&Track::getNumChildren)
     .def("getChildTrackID",&Track::getChildTrackID);
   

@@ -82,7 +82,7 @@ setup(
         ],
  
     setup_requires = [],
-    install_requires = ['uncertainties','pyzmq', 'pycuda', 'geant4-pybind',
+    install_requires = ['uncertainties','pyzmq', 'pycuda', 'geant4-pybind', 'gmsh',
                         'numpy>=1.6', 'pygame', 'nose', 'sphinx'],
     #test_suite = 'nose.collector',
     

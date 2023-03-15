@@ -140,7 +140,7 @@ def solid_polyhedra(startphi, deltaphi, numsides, r_list, z_list):
             vertices.append(origin)
         planes.append(vertices)
 
-    planes = np.asarray(planes)
+    planes = [np.array(a_plane) for a_plane in planes]
     bottom = planes[0]
     bottom_rolled = np.roll(bottom, -1)
     if r_list[0] == 0:

@@ -11,7 +11,7 @@ print("3 ... how did we get here??-")
 #from Geant4 import *
 #from geant4_pybind import *
 #from geant4_pybind import G4ParticleGun, G4Material, G4MaterialPropertiesTable, G4VModularPhysicsList
-from geant4_pybind import G4VModularPhysicsList
+#from geant4_pybind import G4VModularPhysicsList
 print("4")
 #g4unmute()
 #import g4py.ezgeom
