@@ -177,6 +177,7 @@ class GDMLLoader:
         dispatcher = {
             'box':              helper.box,
             'eltube':           helper.eltube,
+            'ellipsoid':        helper.ellipsoid,
             'orb':              helper.orb,
             'polycone':         helper.polycone,
             'polyhedra':        helper.polyhedra,

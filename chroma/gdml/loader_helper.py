@@ -46,6 +46,10 @@ def box(elem):
     x, y, z = get_vals(elem, ['x', 'y', 'z'], unit_attr='lunit')
     return gen_mesh.gdml_box(x, y, z)
 
+def ellipsoid(elem):
+    ax, by, cz = get_vals(elem, ['ax', 'by', 'cz'], default_vals=[1.0, 1.0, 1.0], unit_attr='lunit')
+    zcut1, zcut2 = get_vals(elem, ['zcut1', 'zcut2'], default_vals=[0.0, 0.0], unit_attr='lunit')
+    return gen_mesh.gdml_ellipsoid(ax, by, cz, zcut1, zcut2)
 
 def eltube(elem):
     dx, dy, dz = get_vals(elem, ['dx', 'dy', 'dz'], unit_attr='lunit')
