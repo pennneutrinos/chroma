@@ -251,6 +251,14 @@ def gdml_sphere(rmin, rmax, startphi, deltaphi, starttheta, deltatheta):
     assert len(sphere_tags_3d) == 1, f'Generated {len(sphere_tags_3d)} solids instead of 1.'
     return sphere_tags_3d[0]
 
+def gdml_ellipsoid(ax, by, cz, zcut1, zcut2):
+    base_ellipsoid = occ.addSphere(0, 0, 0, ax)
+    squish_b, squish_c = by / ax, cz / ax
+    ellipsoid = occ.dilate(getDimTags(3, base_ellipsoid), 0, 0, 0, 1, squish_b, squish_c)
+    kill_box = occ.addBox( -ax, -by, zcut1, 2*ax, 2*by, (zcut2-zcut1) )
+    ellipsoid_tags = gdml_boolean(base_ellipsoid, kill_box, 'intersection')
+    return ellipsoid_tags 
+
 
 def gdml_torus(rmin, rmax, rtor, startphi, deltaphi):
     pa = occ.addPoint(rmin, 0, 0)

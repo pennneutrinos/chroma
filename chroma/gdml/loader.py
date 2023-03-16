@@ -206,6 +206,7 @@ class GDMLLoader:
             'sphere':           helper.sphere,
             'torus':            helper.torus,
             'tube':             helper.tube,
+            'ellipsoid':        helper.ellipsoid,
             'opticalsurface':   helper.ignore,
         }
         mprint("one")

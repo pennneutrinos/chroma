@@ -46,7 +46,6 @@ def box(elem):
     x, y, z = get_vals(elem, ['x', 'y', 'z'], unit_attr='lunit')
     return gen_mesh.gdml_box(x, y, z)
 
-
 def eltube(elem):
     dx, dy, dz = get_vals(elem, ['dx', 'dy', 'dz'], unit_attr='lunit')
     return gen_mesh.gdml_eltube(dx, dy, dz)
@@ -85,6 +84,12 @@ def tube(elem):
     rmin, rmax, z = get_vals(elem, ['rmin', 'rmax', 'z'], default_vals=[0.0, None, 0.0],unit_attr='lunit')
     startphi, deltaphi = get_vals(elem, ['startphi', 'deltaphi'], default_vals=[0.0, None], unit_attr='aunit')
     return gen_mesh.gdml_tube(rmin, rmax, z, startphi, deltaphi)
+
+# TODO: Actually define an ellipsoid
+def ellipsoid(elem):
+    ax, by, cz = get_vals(elem, ['ax', 'by', 'cz'], default_vals=[1.0, 1.0, 1.0], unit_attr='lunit')
+    zcut1, zcut2 = get_vals(elem, ['zcut1', 'zcut2'], default_vals=[0.0, 0.0], unit_attr='lunit')
+    return gen_mesh.gdml_ellipsoid(ax, by, cz, zcut1, zcut2)
 
 def notImplemented(elem):
     raise NotImplementedError(f'{elem.tag} is not implemented')
