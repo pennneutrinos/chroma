@@ -75,7 +75,7 @@ setup(
         Pybind11Extension('chroma.generator.mute',
                   ['src/mute.cc'],
                   include_dirs=include_dirs,
-                  extra_compile_args=geant4_cflags,
+                  extra_compile_args=['--std=c++17']+geant4_cflags,
                   extra_link_args=geant4_libs+clhep_libs,
                   extra_objects=extra_objects,)
                   #libraries=libraries),

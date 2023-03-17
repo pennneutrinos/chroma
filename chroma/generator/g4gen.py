@@ -1,26 +1,15 @@
-print("1")
 from chroma.generator.mute import *
 
-print("2")
 import numpy as np
 from chroma.event import Photons, Vertex, Steps
 from chroma.tools import argsort_direction
 
-print("3 ... how did we get here??-")
-#g4mute()
-#from Geant4 import *
-#from geant4_pybind import *
-#from geant4_pybind import G4ParticleGun, G4Material, G4MaterialPropertiesTable, G4VModularPhysicsList
-#from geant4_pybind import G4VModularPhysicsList
-print("4")
-#g4unmute()
-#import g4py.ezgeom
-#import g4py.NISTmaterials
-#import g4py.ParticleGun
+g4mute()
+from geant4_pybind import *
+g4unmute()
 from chroma.generator import _g4chroma
-print("5")
 import chroma.geometry as geometry
-print("6")
+
 
 def add_prop(prop_table,name,material,prop_str,option=None):
     if prop_str not in material.__dict__:

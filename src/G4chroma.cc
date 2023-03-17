@@ -252,13 +252,13 @@ py::array_t<T> StepAccessor(Track *pta) {
 
 PYBIND11_MODULE(_g4chroma, mod)
 {
-  py::class_<G4VModularPhysicsList>(mod, "G4VModularPhysicsList")
+  py::class_<G4VModularPhysicsList>(mod, "G4VModularPhysicsList", py::module_local())
     .def(py::init<>());
 
-  py::class_<G4UserTrackingAction>(mod, "G4UserTrackingAction")
+  py::class_<G4UserTrackingAction>(mod, "G4UserTrackingAction", py::module_local())
     .def(py::init<>());
 
-  py::class_<G4UserSteppingAction>(mod, "G4UserSteppingAction")
+  py::class_<G4UserSteppingAction>(mod, "G4UserSteppingAction", py::module_local())
     .def(py::init<>());
 
   py::class_<ChromaPhysicsList, G4VModularPhysicsList>(mod, "ChromaPhysicsList")

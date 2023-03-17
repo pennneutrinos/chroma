@@ -44,10 +44,11 @@ class Simulation(object):
         self.context = gpu.create_cuda_context(cuda_device)
 
         if hasattr(detector, 'num_channels'):
-            self.gpu_geometry = gpu.GPUDetector(detector)
-            self.gpu_daq = gpu.GPUDaq(self.gpu_geometry)
-            self.gpu_pdf = gpu.GPUPDF()
-            self.gpu_pdf_kernel = gpu.GPUKernelPDF()
+            if detector.num_channels() > 0:
+                self.gpu_geometry = gpu.GPUDetector(detector)
+                self.gpu_daq = gpu.GPUDaq(self.gpu_geometry)
+                self.gpu_pdf = gpu.GPUPDF()
+                self.gpu_pdf_kernel = gpu.GPUKernelPDF()
         else:
             self.gpu_geometry = gpu.GPUGeometry(detector)
 

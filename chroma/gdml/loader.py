@@ -284,4 +284,9 @@ class GDMLLoader:
                 detector.add_solid(solid, displacement=pos, rotation=rot)   
             else:
                 raise Exception('Unknown volume classification: '+classification)
+            mprint(" detector hasattr(num_channels): ", hasattr(detector, 'num_channels'))
+            try:
+                mprint(" detector (num_channels): ", detector.num_channels())
+            except:
+                pass
         return detector
