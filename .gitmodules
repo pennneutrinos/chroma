@@ -1,0 +1,3 @@
+[submodule "geant4_pybind"]
+	path = geant4_pybind
+	url = https://github.com/HaarigerHarald/geant4_pybind
