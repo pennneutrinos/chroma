@@ -51,8 +51,10 @@ class Simulation(object):
                 self.gpu_daq = gpu.GPUDaq(self.gpu_geometry)
                 self.gpu_pdf = gpu.GPUPDF()
                 self.gpu_pdf_kernel = gpu.GPUKernelPDF()
+            else:
+                raise ValueError(f'Detector has {detector.num_channels()} channels.')
         else:
-            self.gpu_geometry = gpu.GPUGeometry(detector)
+            self.gpu_geometry = gpu.GPUGeometry(self.gpu_geometry)
 
         self.rng_states = gpu.get_rng_states(self.nthreads_per_block*self.max_blocks, seed=self.seed)
 
