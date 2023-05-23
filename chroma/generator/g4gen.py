@@ -24,25 +24,20 @@ def add_prop(prop_table,name,material,prop_str,option=None):
         if type(data) is dict:
             for prefix,_data in data.items():
                 energy, values = transform(_data)
-                print(f'Energies: {energy}, and values: {values}')
                 prop_table.AddProperty(name+prefix, G4doubleVector(energy), G4doubleVector(values))
         else:
             energy, values = transform(data)
-            print(f'Energies: {energy}, and values: {values}')
             prop_table.AddProperty(name, G4doubleVector(energy), G4doubleVector(values))
     
 
 def create_g4material(material):
-    print(f'Creating material with name {material.name}, density {material.density}, composition {material.composition}')
     #g4material = G4Material(material.name, material.density * g / cm3,
     #                        len(material.composition))
     g4material = G4Material("Carbon", 6, 12.01*g/mole, 2.0*g/cm3)
-    print("G4Element.GetNumberOfElements()", G4Element.GetNumberOfElements())
     # Add elements -- fixme
     #for element_name, element_frac_by_weight in material.composition.items():
     #    g4material.AddElement(G4Element.GetElement(element_name, True), element_frac_by_weight)
     
-    print("okay so far")
     # Add properties necessary for primary scintillation generation
     prop_table = G4MaterialPropertiesTable()
     #prop_table = g4material.GetMaterialPropertiesTable()
@@ -50,7 +45,6 @@ def create_g4material(material):
     add_prop(prop_table,'SCINTILLATION',material,'scintillation_spectrum',option='dy_dwavelength')
     add_prop(prop_table,'SCINTWAVEFORM',material,'scintillation_waveform') #could be a PDF but this requires time constants
     add_prop(prop_table,'SCINTMOD',material,'scintillation_mod')
-    print("prop table okay")
     if 'scintillation_light_yield' in material.__dict__:
         data = material.scintillation_light_yield 
         if data is not None:
@@ -58,7 +52,6 @@ def create_g4material(material):
 
     # Load properties into material
     g4material.SetMaterialPropertiesTable(prop_table)
-    print("did a thing no issue")
     return g4material
 
 class G4Detector(G4VUserDetectorConstruction):
@@ -70,13 +63,10 @@ class G4Detector(G4VUserDetectorConstruction):
         nist = G4NistManager.Instance()
         if isinstance(self.material,geometry.Material):
             # Fix me maybe
-            print("This is the test instance")
             self.world_material = create_g4material(self.material)
             #self.world_material = nist.FindOrBuildMaterial("G4_PLASTIC_SC_VINYLTOLUENE")
             #self.world_material = nist.FindOrBuildMaterial("G4_WATER", True)
-            print(f'Type of world material: {type(self.world_material)}')
             prop_table = self.world_material.GetMaterialPropertiesTable()
-            print(f'Type of prop table: {type(prop_table)}')
             prop_table.DumpTable()
 
             solidWorld = G4Box('world', 100*m, 100*m, 100*m)
@@ -85,7 +75,6 @@ class G4Detector(G4VUserDetectorConstruction):
                                           'world', logicWorld, None, False, 0)
             self.world = physicalWorld
         else:
-            print("DB: New world mat")
             self.world_material = nist.FindOrBuildMaterial("G4_PLASTIC_SC_VINYLTOLUENE")
             self.world_material = G4Material.GetMaterial("G4_PLASTIC_SC_VINYLTOLUENE")
 
@@ -109,10 +98,8 @@ class G4Primary(G4VUserPrimaryGeneratorAction):
         #self.particle_gun.SetParticleByName(self.vertex.particle_name)
         chosen_particle = self.particle_table.FindParticle(self.vertex.particle_name)
         self.particle_gun.SetParticleDefinition(chosen_particle)
-        print("A.2.1.2", self.vertex.particle_name)
         #Geant4 seems to call 'ParticleEnergy' KineticEnergy - see G4ParticleGun 
         kinetic_energy = self.vertex.ke*MeV
-        print(f"A.2.1.3 -> {kinetic_energy}")
 
         # Must be float type to call GEANT4 code
         pos = np.asarray(self.vertex.pos, dtype=np.float64)
@@ -122,7 +109,6 @@ class G4Primary(G4VUserPrimaryGeneratorAction):
         self.particle_gun.SetParticleMomentumDirection(G4ThreeVector(*dir).unit())
         self.particle_gun.SetParticleTime(self.vertex.t0*ns)
         self.particle_gun.SetParticleEnergy(kinetic_energy)
-        print("A.2.1.4")
         if self.vertex.pol is not None:
             self.particle_gun.SetParticlePolarization(G4ThreeVector(*(self.vertex.pol)).unit())
         self.particle_gun.GeneratePrimaryVertex(anEvent)
@@ -183,18 +169,16 @@ class G4Generator(object):
         #UImanager.ApplyCommand("/tracking/storeTrajectory 1")
 
         ## Test test test
-        print("HELP!")
-        visManager = G4VisExecutive()
+        #visManager = G4VisExecutive()
 
         # Initialization
         self.run_manager.Initialize()
         self.generate_photons([Vertex('e-', (0,0,0), (1,0,0), 5.0, 1.0)], mute=False, tracking=True)
         #self.generate_photons([Vertex('opticalphoton', (0,0,0), (1,0,0), 2e-6, 1.0)], mute=False, tracking=True)
         # Testing Visualization
-        visManager.Initialize()
+        #visManager.Initialize()
         ui = G4UIExecutive(1, ['--interactive'])
         #UImanager.ApplyCommand("/control/execute vis.mac")
-        #print("HELP!")
         #ui.SessionStart()
 
     def _extract_photons_from_tracking_action(self, sort=False):
@@ -234,7 +218,6 @@ class G4Generator(object):
     
     def _extract_vertex_from_stepping_action(self, index=1):
         track = self.stepping_action.getTrack(index)
-        print('test', track.pdg_code)
         steps = Steps(track.getStepX(),track.getStepY(),track.getStepZ(),track.getStepT(),
                       track.getStepDX(),track.getStepDY(),track.getStepDZ(),track.getStepKE(),
                       track.getStepEDep(),track.getStepQEDep())

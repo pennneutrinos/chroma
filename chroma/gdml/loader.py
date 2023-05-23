@@ -74,15 +74,18 @@ def _default_volume_classifier(volume_ref, material_ref, parent_material_ref):
     '''This is an example volume classifier, primarily for visualization'''
     #if 'OpDetSensitive' in volume_ref:
     ## MORGAN: Adjust later, color here just for tests
-    mprint(volume_ref)
-    if 'pmts_body' in volume_ref:
-        return 'pmt',dict(material1=vacuum, material2=vacuum, color=0xA0A05000, surface=None, channel_type=0)
-    elif 'pmts_inner1' in volume_ref:
-        return 'pmt',dict(material1=vacuum, material2=vacuum, color=0xA023a000, surface=None, channel_type=0)
-    elif 'pmts_inner2' in volume_ref:
-        return 'pmt',dict(material1=vacuum, material2=vacuum, color=0xA0008da0, surface=None, channel_type=0)
-    elif 'pmts_dynode' in volume_ref:
-        return 'pmt',dict(material1=vacuum, material2=vacuum, color=0xA0A05000, surface=None, channel_type=0)
+    # Note that using the volume name is not a good idea -- it does not have real information
+    if 'pmt' in volume_ref:
+        if 'body' in volume_ref:
+            return 'solid',dict(material1=vacuum, material2=vacuum, color=0xA0A05000, surface=None, channel_type=0)
+        elif 'inner1' in volume_ref:
+            return 'solid',dict(material1=vacuum, material2=vacuum, color=0xA023a000, surface=None, channel_type=0)
+        elif 'inner2' in volume_ref:
+            return 'solid',dict(material1=vacuum, material2=vacuum, color=0xA0008da0, surface=None, channel_type=0)
+        elif 'dynode' in volume_ref:
+            return 'pmt',dict(material1=vacuum, material2=vacuum, color=0xA0A05000, surface=None, channel_type=0)
+        else:
+            return 'solid',dict(material1=vacuum, material2=vacuum, color=0xEEA0A0A0, surface=None)
     elif material_ref == parent_material_ref:
         return 'omit',dict()
     else:
@@ -277,6 +280,7 @@ class GDMLLoader:
                 continue
             if classification == 'pmt':
                 channel_type = kwargs.pop('channel_type',None)
+                mprint(f'channel_type: {channel_type}')
                 solid = Solid(mesh, **kwargs)
                 detector.add_pmt(solid, displacement=pos, rotation=rot, channel_type=channel_type)   
             elif classification == 'solid':
