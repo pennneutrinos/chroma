@@ -14,8 +14,10 @@ import pycuda.driver as cuda
 from timeit import default_timer as timer
 
 def pick_seed():
-    """Returns a seed for a random number generator selected using
-    a mixture of the current time and the current process ID."""
+    """
+    Returns a seed for a random number generator selected using
+    a mixture of the current time and the current process ID.
+    """
     return int(time.time()) ^ (os.getpid() << 16) & 2**32-1
 
 class Simulation(object):
@@ -57,9 +59,10 @@ class Simulation(object):
         self.pdf_config = None
      
     def _simulate_batch(self,batch_events,keep_photons_beg=False,keep_photons_end=False,keep_hits=True,keep_flat_hits=True,run_daq=False, max_steps=100, verbose=False):
-        '''Assumes batch_events is a list of Event objects with photons_beg having evidx set to the index in the array.
-           
-           Yields the fully formed events. Do not call directly.'''
+        """
+        Assumes batch_events is a list of Event objects with photons_beg having evidx set to the index in the array.
+        Yields the fully formed events. Do not call directly.
+        """
         
         t_start = timer()
         

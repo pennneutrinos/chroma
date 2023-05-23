@@ -27,12 +27,6 @@ void mute_g4unmute() {
 
 #include <pybind11/pybind11.h>
 
-//PYBIND11_MODULE(mute, mod)
-//{
-//  mod.doc() = "Geant4 Mute";
-//  mod.def("g4mute", mute_g4mute);
-//  mod.def("g4unmute", mute_g4unmute);
-//}
 PYBIND11_MODULE(mute, mod)
 {
   mod.doc() = "Geant4 Mute";

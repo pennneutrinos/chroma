@@ -28,6 +28,8 @@ if not hasattr(ROOT, 'Vertex') or not hasattr(ROOT, 'Channel'):
     # no longer an issue for root 6+
     # ROOT.gSystem.Load('libCint')
     # Import this C file for access to data structure
+    if not hasattr(ROOT, 'Event'):
+        print(f"Critical Warning: ROOT library ({home_root_C}) is missing the Event class")
     ROOT.gROOT.ProcessLine('.L '+home_root_C+'+')
 
 

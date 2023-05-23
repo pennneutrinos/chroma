@@ -87,7 +87,7 @@ def main():
     ev_gen = constant_particle_gun(particle_name=options.particle, 
                                    pos=pos, dir=dir, ke=options.ke)
 
-    sim = Simulation(detector, seed=options.seed, cuda_device=options.device,
+    sim = Simulation(detector, seed=options.seed, cuda_device=options.device, photon_tracking=True, particle_tracking=True,
                      geant4_processes=options.ngenerators, nthreads_per_block=1)
     
     print('RNG seed: %i' % sim.seed)

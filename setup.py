@@ -3,22 +3,7 @@ from pybind11.setup_helpers import Pybind11Extension
 import subprocess
 import os
 
-libraries = ['boost_python3','boost_numpy3']
 extra_objects = []
-
-if 'VIRTUAL_ENV' in os.environ:
-    # use local copy of boost libs
-    boost_lib = os.path.join(os.environ['VIRTUAL_ENV'],'lib','libboost_python3.so')
-    if os.path.exists(boost_lib):
-        extra_objects.append(boost_lib)
-        libraries.remove('boost_python3')
-    boost_lib = os.path.join(os.environ['VIRTUAL_ENV'],'lib','libboost_numpy3.so')
-    if os.path.exists(boost_lib):
-        extra_objects.append(boost_lib)
-        libraries.remove('boost_numpy3')
-
-#libraries = ['libboost_numpy3.so', 'libboost_python3.so']
-#extra_objects = ['libboost_numpy3.so', 'libboost_python3.so']
 
 def check_output(*popenargs, **kwargs):
     if 'stdout' in kwargs:
@@ -41,49 +26,37 @@ try:
 except OSError:
     clhep_libs = []
 
-
 include_dirs=['src']
-
-#####
 
 if 'VIRTUAL_ENV' in os.environ:
     include_dirs.append(os.path.join(os.environ['VIRTUAL_ENV'], 'include'))
-#try: --> Deprecated
-#    import numpy.distutils
-#    include_dirs += numpy.distutils.misc_util.get_numpy_include_dirs()
-#except:
-#    pass # if numpy doesn't exist yet
 
 setup(
     name = 'Chroma',
-    version = '0.5.1',
+    version = '0.6.0',
     packages = find_packages(),
     include_package_data=True,
 
     scripts = ['bin/chroma-sim', 'bin/chroma-cam',
                'bin/chroma-geo', 'bin/chroma-bvh',
                'bin/chroma-server'],
-    ext_modules = [
-        Pybind11Extension('chroma.generator._g4chroma',
-                  ['src/G4chroma.cc','src/GLG4Scint.cc'],
-                  include_dirs=include_dirs,
-                  extra_compile_args=['--std=c++17']+geant4_cflags,
-                  extra_link_args=geant4_libs+clhep_libs,
-                  extra_objects=extra_objects,
-                  #libraries=libraries,
-                  ),
-        Pybind11Extension('chroma.generator.mute',
-                  ['src/mute.cc'],
-                  include_dirs=include_dirs,
-                  extra_compile_args=['--std=c++17']+geant4_cflags,
-                  extra_link_args=geant4_libs+clhep_libs,
-                  extra_objects=extra_objects,)
-                  #libraries=libraries),
-        ],
+    #ext_modules = [
+    #    Pybind11Extension('chroma.generator._g4chroma',
+    #              ['src/G4chroma.cc','src/GLG4Scint.cc'],
+    #              include_dirs=include_dirs,
+    #              extra_compile_args=['--std=c++17']+geant4_cflags,
+    #              extra_link_args=geant4_libs+clhep_libs,
+    #              extra_objects=extra_objects,
+    #              ),
+    #    Pybind11Extension('chroma.generator.mute',
+    #              ['src/mute.cc'],
+    #              include_dirs=include_dirs,
+    #              extra_compile_args=['--std=c++17']+geant4_cflags,
+    #              extra_link_args=geant4_libs+clhep_libs,
+    #              extra_objects=extra_objects,)
+    #    ],
  
     setup_requires = [],
     install_requires = ['uncertainties','pyzmq', 'pycuda', 'geant4-pybind', 'gmsh',
-                        'numpy>=1.6', 'pygame', 'nose', 'sphinx'],
-    #test_suite = 'nose.collector',
-    
+                        'numpy>=1.6', 'pygame', 'nose', 'sphinx', 'pybind11'],
 )
