@@ -6,6 +6,7 @@ from chroma.detector import Detector
 from chroma.transform import make_rotation_matrix
 from chroma.geometry import Mesh, Solid
 from chroma.log import logger
+from copy import deepcopy
 
 #Using the PyMesh library instead of Chroma's internal meshes to support boolean
 #operations like subtractions or unions. Perhaps Chroma's meshes should be
@@ -228,11 +229,11 @@ class GDMLLoader:
             for child, c_pos, c_rot in zip(v.children, v.child_pos, v.child_rot):
                 c_pos = self.get_vals(c_pos) if c_pos is not None else np.zeros(3)
                 c_rot = self.get_vals(c_rot) if c_rot is not None else np.identity(3)
-                c_pos = np.matmul(c_pos,rot)+pos
+                c_pos = (rot @ c_pos) + pos
                 x_rot = make_rotation_matrix(c_rot[0], [1, 0, 0])
                 y_rot = make_rotation_matrix(c_rot[1], [0, 1, 0])
                 z_rot = make_rotation_matrix(c_rot[2], [0, 0, 1])
-                c_rot = np.matmul(rot, np.matmul(x_rot, np.matmul(y_rot, z_rot))) #FIXME verify this order
+                c_rot = (rot @ x_rot @ y_rot @ z_rot) #FIXME verify this order
                 q.append([child, c_pos, c_rot, v.material_ref])
             classification, kwargs = volume_classifier(v.name, v.material_ref, parent_material_ref)
             if classification == 'omit':
@@ -240,7 +241,7 @@ class GDMLLoader:
                 continue
             if v.solid_ref in self.mesh_cache:
                 logger.info(f"Using cache of solid {v.solid_ref} for volume {v.name}")
-                mesh = self.mesh_cache[v.solid_ref]
+                mesh = deepcopy(self.mesh_cache[v.solid_ref])
             else:
                 gmsh.clear()
                 obj = self.get_mesh(v.solid_ref)
@@ -250,7 +251,7 @@ class GDMLLoader:
                     gmsh.model.mesh.refine()
                 verts, faces = generate_mesh_from_obj()
                 mesh = Mesh(verts, faces)
-                self.mesh_cache[v.solid_ref] = mesh
+                self.mesh_cache[v.solid_ref] = deepcopy(mesh)
             if mesh is None:
                 continue
             if classification == 'pmt':
