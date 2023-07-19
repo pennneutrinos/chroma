@@ -632,7 +632,7 @@ void GLG4Scint::MyPhysicsTable::Entry::Build(
 
     if (theWaveForm) {
         // Do we have time-series or decay-time data?
-        if (theWaveForm->GetMinLowEdgeEnergy() >= 0.0) {
+        if (theWaveForm->GetEnergy(0) >= 0.0) {
             // We have digitized waveform (time-series) data
             // Find the integral
             timeIntegral       = Integrate_MPV_to_POFV(theWaveForm);
@@ -649,8 +649,8 @@ void GLG4Scint::MyPhysicsTable::Entry::Build(
                        << " Undefined results will ensue!\n";
             }
 
-            G4double maxtime   = -3.0 * (theWaveForm->GetMinLowEdgeEnergy());
-            G4double mintime   = -1.0 * (theWaveForm->GetMaxLowEdgeEnergy());
+            G4double maxtime   = -3.0 * (theWaveForm->GetMaxEnergy());
+            G4double mintime   = -1.0 * (theWaveForm->GetEnergy(0));
             G4double bin_width = mintime / 100;
             int nbins          = (int)(maxtime / bin_width) + 1;
             G4double *tval     = new G4double[nbins];

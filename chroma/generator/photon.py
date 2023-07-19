@@ -1,9 +1,12 @@
-
 import multiprocessing
 import numpy as np
 import threading
 import zmq
 import uuid
+import os, sys
+sdir = os.path.dirname(__file__)
+sys.path.append(sdir)
+import g4gen
 
 class G4GeneratorProcess(multiprocessing.Process):
     def __init__(self, idnum, material, vertex_socket_address, photon_socket_address, seed=None, tracking=False):
@@ -18,25 +21,36 @@ class G4GeneratorProcess(multiprocessing.Process):
         self.daemon = True
 
     def run(self):
-        from . import g4gen
+        print("process do run 1")
         gen = g4gen.G4Generator(self.material, seed=self.seed)
+        print("process do run 2")
         context = zmq.Context()
+        print("process do run 3")
         vertex_socket = context.socket(zmq.PULL)
         vertex_socket.connect(self.vertex_socket_address)
+        print("process do run 4")
         photon_socket = context.socket(zmq.PUSH)
         photon_socket.connect(self.photon_socket_address)
 
+
+        print("process do send")
         # Signal with the photon socket that we are online
         # and ready for messages.
         photon_socket.send(b'READY')
 
         while True:
+            print("process do run 4-")
             ev = vertex_socket.recv_pyobj()
+            #print(f'.... {ev.particle_name}')
             if self.tracking:
+                print("process do run 5", ev.vertices)
                 ev.vertices,ev.photons_beg,ev.photon_parent_trackids = gen.generate_photons(ev.vertices,tracking=self.tracking)
             else:
+                print("process do run 6")
                 ev.vertices,ev.photons_beg = gen.generate_photons(ev.vertices,tracking=self.tracking)
+            print("process do run 7", ev.vertices, ev.photons_beg, ev.photon_parent_trackids, ev)
             photon_socket.send_pyobj(ev)
+            print("process do run 8", f'address is {self.photon_socket_address}')
 
 def partition(num, partitions):
     """Generator that returns num//partitions, with the last item including
@@ -88,11 +102,15 @@ class G4ParallelGenerator(object):
         self.processes_initialized = False
     
     def generate_events(self, vertex_iterator):
+        print('M> G4PG Gen')
         if not self.processes_initialized:
             # Verify everyone is running and connected to avoid
             # sending all the events to one client.
+            print(f'Init proc now count is {len(self.processes)}')
             for i in range(len(self.processes)):
+                print(f'Chillin for msg {i}')
                 msg = self.photon_socket.recv()
+                print(f'Got msg: {msg}')
                 assert msg == b'READY'
             self.processes_initialized = True
             

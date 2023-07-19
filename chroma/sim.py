@@ -14,8 +14,10 @@ import pycuda.driver as cuda
 from timeit import default_timer as timer
 
 def pick_seed():
-    """Returns a seed for a random number generator selected using
-    a mixture of the current time and the current process ID."""
+    """
+    Returns a seed for a random number generator selected using
+    a mixture of the current time and the current process ID.
+    """
     return int(time.time()) ^ (os.getpid() << 16) & 2**32-1
 
 class Simulation(object):
@@ -44,21 +46,26 @@ class Simulation(object):
         self.context = gpu.create_cuda_context(cuda_device)
 
         if hasattr(detector, 'num_channels'):
-            self.gpu_geometry = gpu.GPUDetector(detector)
-            self.gpu_daq = gpu.GPUDaq(self.gpu_geometry)
-            self.gpu_pdf = gpu.GPUPDF()
-            self.gpu_pdf_kernel = gpu.GPUKernelPDF()
+            print(f'Using GPU detector with {detector.num_channels()} channels.')
+            if detector.num_channels() > 0:
+                self.gpu_geometry = gpu.GPUDetector(detector)
+                self.gpu_daq = gpu.GPUDaq(self.gpu_geometry)
+                self.gpu_pdf = gpu.GPUPDF()
+                self.gpu_pdf_kernel = gpu.GPUKernelPDF()
+            else:
+                raise ValueError(f'Detector has {detector.num_channels()} channels.')
         else:
-            self.gpu_geometry = gpu.GPUGeometry(detector)
+            self.gpu_geometry = gpu.GPUGeometry(self.gpu_geometry)
 
         self.rng_states = gpu.get_rng_states(self.nthreads_per_block*self.max_blocks, seed=self.seed)
 
         self.pdf_config = None
      
     def _simulate_batch(self,batch_events,keep_photons_beg=False,keep_photons_end=False,keep_hits=True,keep_flat_hits=True,run_daq=False, max_steps=100, verbose=False):
-        '''Assumes batch_events is a list of Event objects with photons_beg having evidx set to the index in the array.
-           
-           Yields the fully formed events. Do not call directly.'''
+        """
+        Assumes batch_events is a list of Event objects with photons_beg having evidx set to the index in the array.
+        Yields the fully formed events. Do not call directly.
+        """
         
         t_start = timer()
         
@@ -141,24 +148,31 @@ class Simulation(object):
     def simulate(self, iterable, keep_photons_beg=False, keep_photons_end=False,
                  keep_hits=True, keep_flat_hits=True, run_daq=False, max_steps=1000,
                  photons_per_batch=1000000):
+        print("Begin Simulate")
         if isinstance(iterable, event.Photons):
             first_element, iterable = iterable, [iterable]
+            print("A")
         else:
             first_element, iterable = itertoolset.peek(iterable)
+            print("B")
 
         if isinstance(first_element, event.Event):
             iterable = self.photon_generator.generate_events(iterable)
+            print("1")
         elif isinstance(first_element, event.Photons):
             iterable = (event.Event(photons_beg=x) for x in iterable)
+            print("2")
         elif isinstance(first_element, event.Vertex):
             iterable = (event.Event(vertices=[vertex]) for vertex in iterable)
             iterable = self.photon_generator.generate_events(iterable)
+            print("3")
 
         nphotons = 0
         batch_events = []
         
+        print("hi > ", iterable)
         for ev in iterable:
-            
+            print(f"nphotons: {len(ev.photons_beg)}")
             ev.nphotons = len(ev.photons_beg)
             ev.photons_beg.evidx[:] = len(batch_events)
             
@@ -175,7 +189,6 @@ class Simulation(object):
                                                 run_daq=run_daq, max_steps=max_steps)
                 nphotons = 0
                 batch_events = []
-                
         if len(batch_events) != 0:
             yield from self._simulate_batch(batch_events,
                                             keep_photons_beg=keep_photons_beg,

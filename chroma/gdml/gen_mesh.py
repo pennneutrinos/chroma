@@ -1,259 +1,284 @@
-import chroma.make as make
-import pymesh
-from chroma.geometry import Mesh
-from chroma.transform import rotate, rotate_matrix, make_rotation_matrix
-from chroma.log import logger
+import gmsh
+
+occ = gmsh.model.occ
 
 import numpy as np
-import copy 
 
-## Generate meshes for GDML solids. 
-## TODO add extra parameters for mesh resolution
+occ = gmsh.model.occ
+from chroma.log import logger
 
-def mesh_to_pymesh(mesh):
-    return pymesh.form_mesh(mesh.vertices, mesh.triangles)
 
-def pymesh_to_mesh(mesh_p):
-    return Mesh(mesh_p.vertices, mesh_p.faces)
+def getTagsByDim(dimTags, dim):
+    return [dimTag[1] for dimTag in dimTags if dimTag[0] == dim]
 
-def transform(mesh, pos=None, rot=None):
-    '''Perform translation and rotation for GDML solids.
-    NOTE: GDML solids define rotation oppositely than chroma. Positive rotation is a clockwise rotation when looking
-    towards infinity.
-    '''
-    mesh_result = copy.deepcopy(mesh)
-    if rot is not None:
-        for idx, phi in enumerate(rot):
-            axis = np.zeros(3)
-            axis[idx] = 1
-            mesh_result.vertices = rotate_matrix(mesh_result.vertices, -phi, axis)
-    if pos is not None:
-        mesh_result.vertices += pos
-    return mesh_result
+def getDimTagsByDim(dimTags, dim):
+    return [dimTag for dimTag in dimTags if dimTag[0] == dim]
 
-def remove_zero_area_faces_raw(vertices, faces):
-    new_faces = []
-    for face in faces:
-        a = vertices[face[0]]
-        b = vertices[face[1]]
-        c = vertices[face[2]]
-        if np.array_equal(a, b) or np.array_equal(a, c) or np.array_equal(b, c): continue
-        product = np.linalg.norm(np.cross(b-a, c-a))
-        if product!=0:
-            new_faces.append(face)
-    new_faces = np.asarray(new_faces)
-    new_vertices, new_faces, _ = pymesh.remove_isolated_vertices_raw(vertices, new_faces)
-    return new_vertices, new_faces
+def getDimTags(dim, tags):
+    if type(tags) == int:
+        return [(dim, tags)]
+    result = []
+    for tag in tags:
+        result.append((dim, tag))
+    return result
 
-def pymesh_remove_zero_area_faces(mesh_p):
-    mesh = pymesh_to_mesh(mesh_p)
-    mesh.vertices, mesh.triangles = remove_zero_area_faces_raw(mesh.vertices, mesh.triangles)
-    return mesh_to_pymesh(mesh)
-    
-def gdml_boolean(mesh_1, mesh_2, op, engine='auto', firstpos = None, firstrot= None, pos=None, rot=None):
-    # pymesh boolean method wrapper for chroma mesh
+def gdml_transform(obj, pos=None, rot=None):
+    if pos == None: 
+        pos = [0., 0., 0.]
+    if rot == None:
+        rot = [0., 0., 0.]
+    for axis_idx, angle in enumerate(rot):
+        axis = np.zeros(3)
+        axis[axis_idx]=1
+        occ.rotate(getDimTags(3, obj), 0., 0., 0., axis[0], axis[1], axis[2], angle)
+    occ.translate(getDimTags(3, obj), pos[0], pos[1], pos[2])
+    return obj
+
+
+def gdml_boolean(a, b, op, pos=None, rot=None, firstpos=None, firstrot=None, deleteA=True, deleteB=True, noUnion=False):
+    # Deal with all none objects
+    if op == 'union':
+        if a is None:
+            return b
+        if b is None:
+            return a
     if op == 'subtraction':
-        op = 'difference' # difference is called subtraction in gdml
-    mesh_1 = transform(mesh_1, firstpos, firstrot)
-    mesh_2 = transform(mesh_2, pos, rot)
-    
-    m1_p = mesh_to_pymesh(mesh_1)
-    m2_p = mesh_to_pymesh(mesh_2)
-    result_p = pymesh.boolean(m1_p, m2_p, op, engine=engine)
-    # if len(result_p.vertices) > (len(m1_p.vertices) + len(m2_p.vertices) + 1000):
-    #     logger.info("Boolean op generated a lot more additional triangles, optimizing...")
-    #     result_p, info = pymesh.collapse_short_edges(result_p, rel)
-    result = pymesh_to_mesh(result_p)
-    result_p = mesh_to_pymesh(result)
-    # logger.debug(f"{result_p.vertices.shape}, {result_p.faces.shape}")
-    # logger.debug("Cleaning up")
-    cleaned, _ = pymesh.remove_duplicated_vertices(result_p, tol=1e-10)
-    # cleaned, _ = pymesh.remove_degenerated_triangles(cleaned)
-    cleaned, _ = pymesh.remove_duplicated_faces(cleaned)
-    # cleaned, _ = pymesh.remove_degenerated_triangles(cleaned)
-    # cleaned = pymesh.resolve_self_intersection(cleaned)
-    # cleaned, _ = pymesh.remove_duplicated_faces(cleaned)
-    # logger.debug(f"{cleaned.vertices.shape}, {cleaned.faces.shape}")
-    return pymesh_to_mesh(result_p)
+        assert a is not None, "Subtraction requires first object to be not None"
+        if b is None: return a #Subtracting nothing is a no-op
+    if op == 'intersection':
+        assert a is not None and b is not None, "Intersection requires both objects to be not None"
+    a = gdml_transform(a, pos=firstpos, rot=firstrot)
+    b = gdml_transform(b, pos=pos, rot=rot)
+    if op in ('subtraction', 'difference'):
+        result = occ.cut(getDimTags(3, a), getDimTags(3, b), removeObject=deleteA, removeTool=deleteB)
+    elif op in ('union'):
+        if noUnion:
+            result = getDimTags(3, a) + getDimTags(3, b), None
+        else:
+            result = occ.fuse(getDimTags(3, a), getDimTags(3, b), removeObject=deleteA, removeTool=deleteB)
+    elif op in ('intersection'):
+        result = occ.intersect(getDimTags(3, a), getDimTags(3, b), removeObject=deleteA, removeTool=deleteB)
+    else:
+        raise NotImplementedError(f'{op} is not implemented.')
+    outDimTags, _ = result
+    if len(outDimTags) == 0: return None
+    if len(outDimTags) > 1:
+        logger.info("Note: more than one object created by boolean operation.")
+        return [DimTag[1] for DimTag in outDimTags]
+    return outDimTags[0][1]
 
 def gdml_box(dx, dy, dz):
-    return make.box(dx, dy, dz)
+    result = occ.addBox(-dx / 2, -dy / 2, -dz / 2, dx, dy, dz)
+    return result
 
-def cylinder_segment(r, z, startphi, deltaphi):
-    angles = np.linspace(startphi, startphi+deltaphi, 5, endpoint=True)
-    vertices = np.vstack(
-        [[[0, 0, -z/2]], 
-        np.array([r * np.cos(angles), r * np.sin(angles), -(z/2)*np.ones(len(angles))]).transpose(), 
-        [0, 0, z/2], 
-        np.array([r * np.cos(angles), r * np.sin(angles), (z/2)*np.ones(len(angles))]).transpose()]
-        )
-    
-    # connect the caps
-    faces = [[0, v+1, v] for v in range(1, len(angles))] + \
-            [[len(angles)+1, len(angles) + 1 + v, len(angles) + 2 + v] for v in range(1, len(angles))] 
-    # make the sides
-    for i in range(len(angles)):
-        faces.extend(
-            [[i, i+1, i+1+len(angles)], [i+1+len(angles), i+1, i+2+len(angles)]])
-    faces.extend([[len(angles), 0, 2*len(angles)+1], [2*len(angles)+1, 0, len(angles)+1]])
-    return Mesh(vertices, faces)
 
-def gdml_polycone(startphi, deltaphi, zplane, nsteps=64):
+def genericCone(x, y, z, dx, dy, dz, r1, r2, tag=-1, angle=2 * np.pi):
+    """Generate any cone, even if it is actually a cylinder"""
+    if r1 == r2:
+        return occ.addCylinder(x, y, z, dx, dy, dz, r1, tag=tag, angle=angle)
+    return occ.addCone(x, y, z, dx, dy, dz, r1, r2, tag=tag, angle=angle)
+
+
+def gdml_polycone(startphi, deltaphi, zplane):
     seg_list = []
     zplane = sorted(zplane, key=lambda p: p['z'])
     for pa, pb in zip(zplane, zplane[1:]):
         # zplane has elements rmin, rmax, z
-        center_a = [0, 0, pa['z']]
-        center_b = [0, 0, pb['z']]
-        segment = pymesh.generate_tube(
-            center_a, center_b, # centers
-            pa['rmax'], pb['rmax'], # outer radii
-            pa['rmin'], pb['rmin'], # inner radius
-            num_segments=nsteps
-        )
+        segment_out = genericCone(0, 0, pa['z'],
+                                  0, 0, pb['z'] - pa['z'],
+                                  pa['rmax'], pb['rmax'],
+                                  angle=deltaphi)
+        segment_in = genericCone(0, 0, pa['z'],
+                                 0, 0, pb['z'] - pa['z'],
+                                 pa['rmin'], pb['rmin'],
+                                 angle=deltaphi)
+        segment = gdml_boolean(segment_out, segment_in, 'subtraction')
         seg_list.append(segment)
     # weld everything together
-    result = seg_list[0]
-    for seg in seg_list[1:]:
-        result = pymesh.boolean(result, seg, 'union')
-    result = pymesh_to_mesh(result)
-    # Cut in phi
-    if deltaphi < np.pi*2:
-        max_radius = max([p['rmax'] for p in zplane])
-        max_height = max([abs(p['z']) for p in zplane])
-        segment = cylinder_segment(max_radius*1.5, max_height*1.5, startphi, deltaphi)
-        result = gdml_boolean(result, segment, 'intersection')
+    result = seg_list.pop()
+    for seg in seg_list:
+        result = gdml_boolean(result, seg, 'union')
+    occ.rotate(getDimTags(3, result), 0, 0, 0, 0, 0, 1, startphi)
     return result
-    
 
-def _solid_polyhedra(x_list, z_list, startphi, deltaphi, numsides):
-    " Generate a solid polyhedra that has a leftover sides from startphi+delaphi to startphi"
-    # Apparently rmax and rmin are distances to the middle of the sides, not to the vertices
-    theta_per_side = deltaphi / numsides
-    x_list = [x / np.cos(theta_per_side/2) for x in x_list]
-    profile = np.array([x_list, np.zeros(len(x_list)), z_list]).transpose()
-    if not profile[0, 0] == 0:
-        cap_point = np.array([0, 0, profile[0, 2]])
-        profile = np.insert(profile, 0, cap_point, axis=0)
-    if not profile[-1, 0] == 0:
-        cap_point = np.array([0, 0, profile[-1, 2]])
-        profile = np.vstack([profile, cap_point])
-    steps = np.linspace(startphi, startphi+deltaphi, numsides+1, endpoint=True)
-    # ensure rotation is one full revolution by adding 90 degree faces
-    if deltaphi < np.pi*2:
-        leftover = np.pi*2 - deltaphi
-        while leftover > np.pi*2/3:
-            steps = np.append(steps, steps[-1] + np.pi/2)
-            leftover -= np.pi/2
-        steps = np.append(steps, startphi) 
-    vertices = np.vstack([rotate(profile, angle, (0, 0, -1)) for angle in steps])
-    triangles = make.mesh_grid(np.arange(len(vertices)).reshape((len(steps),len(profile))).transpose()[::-1])
-    return Mesh(vertices, triangles, remove_duplicate_vertices=True)
+
+def make_face(lines):
+    curve_loop = occ.addCurveLoop(lines)
+    return occ.addPlaneSurface([curve_loop])
+
+
+def solid_polyhedra(startphi, deltaphi, numsides, r_list, z_list):
+    assert len(r_list) == len(z_list) == 2
+    assert z_list[0] != z_list[-1]
+    if r_list[0] == r_list[-1] == 0: return None
+    dphi = deltaphi / numsides
+    vertexLengthFactor = 1 / np.cos(dphi / 2)
+    planes = []
+    pointsPerBase = numsides if deltaphi == np.pi * 2 else numsides + 2  # number of points in the polygon
+    # Create the bases
+    for (r, z) in zip(r_list, z_list):
+        vertices = []
+        firstPoint = occ.addPoint(r * vertexLengthFactor, 0, z)
+        if r == 0:
+            vertices = [firstPoint] * pointsPerBase
+        vertices.append(firstPoint)
+        for i in range(numsides - 1):
+            p_dimTag = occ.copy([(0, vertices[-1])])
+            occ.rotate(p_dimTag,
+                       0, 0, 0,
+                       0, 0, 1,
+                       dphi)
+            vertices.append(p_dimTag[0][1])
+        if deltaphi != np.pi * 2:  # need to add one more rotated point, as well as the origin
+            p_dimTag = occ.copy([(0, vertices[-1])])
+            occ.rotate(p_dimTag,
+                       0, 0, 0,
+                       0, 0, 1,
+                       dphi)
+            vertices.append(p_dimTag[0][1])
+            origin = occ.addPoint(0, 0, z)
+            vertices.append(origin)
+        planes.append(vertices)
+
+    planes = [np.array(a_plane) for a_plane in planes]
+    bottom = planes[0]
+    bottom_rolled = np.roll(bottom, -1)
+    if r_list[0] == 0:
+        bottom_lines = [None] * pointsPerBase
+    else:
+        bottom_lines = [occ.addLine(pa, pb) for pa, pb in zip(bottom, bottom_rolled)]
+    top = planes[-1]
+    top_rolled = np.roll(top, -1)
+    if r_list[-1] == 0:
+        top_lines = [None] * pointsPerBase
+    else:
+        top_lines = [occ.addLine(pa, pb) for pa, pb in zip(top, top_rolled)]
+    side_lines = [occ.addLine(pa, pb) for pa, pb in zip(bottom, top)]
+    side_lines_rolled = np.roll(side_lines, -1)
+
+    faces = []
+    for bline, lline, rline, tline in zip(bottom_lines, side_lines, side_lines_rolled, top_lines):
+        boarder = []
+        if bline: boarder.append(bline)
+        boarder.append(rline)
+        if tline: boarder.append(-tline)
+        boarder.append(-lline)
+        faces.append(make_face(boarder))
+    # Add bottom and top
+    if r_list[0] != 0:
+        bottom_face = make_face(bottom_lines)
+        faces.insert(0, bottom_face)
+    if r_list[-1] != 0:
+        top_face = make_face(top_lines)
+        faces.insert(-1, top_face)
+    surfaceLoop = occ.addSurfaceLoop(faces)
+    result = occ.addVolume([surfaceLoop])
+    occ.rotate(getDimTags(3, result), 0, 0, 0, 0, 0, 1, startphi)
+    return result
+
+import time
 
 def gdml_polyhedra(startphi, deltaphi, numsides, zplane):
-    if deltaphi > np.pi*2:
-        logger.warning("Polyhedra does not support deltaphi greater than 2*pi, proceeding with deltaphi = 2*pi")
-        deltaphi = np.pi * 2
+    # First vertex is on the positive X half-axis.
+    # Specified radius is distance from center to the middle of the edge
+    print("do sort")
     zplane = sorted(zplane, key=lambda p: p['z'])
-    z_list = [p['z'] for p in zplane]
-    rmin_list = [p['rmin'] for p in zplane]
-    rmax_list = [p['rmax'] for p in zplane]
-    
-    outer = _solid_polyhedra(rmax_list, z_list, startphi, deltaphi, numsides)
-    inner = _solid_polyhedra(rmin_list, z_list, startphi, deltaphi, numsides)
-    result = gdml_boolean(outer, inner, "difference")
-    # Cut in phi
-    if deltaphi < np.pi*2:
-        max_radius = max([p['rmax'] for p in zplane])
-        max_height = max([abs(p['z']) for p in zplane])
-        segment = cylinder_segment(max_radius*1.5, max_height*1.5, startphi, deltaphi)
-        result = gdml_boolean(result, segment, 'intersection')
-    # cleanup
-    result.vertices, result.triangles, _ = pymesh.collapse_short_edges_raw(result.vertices, result.triangles, abs_threshold = min(min([p['rmin'] for p in zplane])/20, 10.))
+    print("done sort")
+    segment_list = []
+    for pa, pb in zip(zplane, zplane[1:]):
+        rmax_list = pa['rmax'], pb['rmax']
+        rmin_list = pa['rmin'], pb['rmin']
+        z_list = pa['z'], pb['z']
+        outer_solid = solid_polyhedra(startphi, deltaphi, numsides, rmax_list, z_list)
+        inner_solid = solid_polyhedra(startphi, deltaphi, numsides, rmin_list, z_list)
+        if inner_solid is None:
+            segment_list.append(outer_solid)
+        else:
+            segment_list.append(gdml_boolean(outer_solid, inner_solid, op='subtraction'))
+    result = segment_list[0]
+    index = 0
+    total = len(segment_list)
+    beginTime = time.time()
+    #for segment in segment_list[1:]:
+    #    result = gdml_boolean(result, segment, op='union')
+
+    # occ.rotate(getDimTags(3, result), 0, 0, 0, 0, 0, 1, startphi)
+    # Going to try map-reduce style merging
+    def reducedList(segs):
+        z = len(segs)//2
+        print(z)
+        returnedList = []
+        odds = segs[::2][:z]
+        evens = segs[1::2][:z]
+        for (o,e) in zip(odds, evens):
+            returnedList.append( gdml_boolean(o, e, op='union') )
+        if len(segs)%2:
+            returnedList.append(segs[-1])
+        if len(returnedList) > 1:
+            returnedList = reducedList(returnedList)
+        return returnedList
+    result = reducedList(segment_list)
+    print("TotalTime:", time.time()-beginTime)
     return result
 
 
 def gdml_tube(rmin, rmax, z, startphi, deltaphi):
-    if deltaphi > np.pi * 2:
-        deltaphi = np.pi*2
-    full_tube = pymesh.generate_tube([0, 0, -z/2], [0, 0, z/2], 
-        rmax, rmax, rmin, rmin,
-        num_segments=64)
-    segment = cylinder_segment(rmax*1.5, z*1.5, startphi, deltaphi)
-    result = pymesh.boolean(full_tube, mesh_to_pymesh(segment), 'intersection')
-    return pymesh_to_mesh(result)
+    pa = occ.addPoint(rmin, 0, -z / 2)
+    pb = occ.addPoint(rmax, 0, -z / 2)
+    baseArm = occ.addLine(pa, pb)
+    occ.rotate(getDimTags(1, baseArm), 0, 0, 0, 0, 0, 1, startphi)
+    base_dimTags = getDimTagsByDim(occ.revolve(getDimTags(1, baseArm), 0, 0, 0, 0, 0, 1, deltaphi), 2)
+    # numElem = max(1, int(z//100))
+    tube_dimTags = occ.extrude(base_dimTags, 0, 0, z)
+    tube_tags_3d = getTagsByDim(tube_dimTags, 3)
+    assert len(tube_tags_3d) == 1, f'Generated {len(tube_tags_3d)} solids instead of 1.'
+    occ.remove(getDimTags(1, baseArm), recursive=True)
+    return tube_tags_3d[0]
 
-def _sphere_segment_theta(r, starttheta, endtheta, nsteps=16):
-    "make a sphere with theta extending from starttheta to endtheta"
-    assert starttheta ==0 or endtheta == np.pi # can only generate closed solids.
-    thetas = np.linspace(endtheta, starttheta, nsteps, endpoint=True)
-    points = np.array([r * np.sin(thetas), r * np.cos(thetas)]).transpose()
-    points = np.vstack([[0, 0], points, [0, 0]])
-    result = make.rotate_extrude(points[:, 0], points[:, 1],nsteps)
-    # Fix rotated shape's orientation, making it equivalent to spinning around z axis
-    result.vertices[:, [1, 2]] = result.vertices[:, [2, 1]]
-    result.vertices[:, 1] *= -1
-    return result
 
-def gdml_orb(r, order=3):
-    result_p = pymesh.generate_icosphere(r, center=(0, 0, 0), refinement_order=order)
-    return pymesh_to_mesh(result_p)
+def gdml_orb(r):
+    return occ.addSphere(0, 0, 0, r)
 
 def gdml_sphere(rmin, rmax, startphi, deltaphi, starttheta, deltatheta):
-    # GDML Sphere can be an incomplete spherical shell
-    assert (starttheta >= 0 and starttheta <= np.pi and starttheta + deltatheta >= 0 and starttheta + deltatheta <= np.pi), \
-        logger.error("theta spec is not between [0, pi]")
-    # make spherical shell
-    result = gdml_orb(rmax, order=3)
-    if rmin > 0:
-        result = gdml_boolean(result, gdml_orb(rmin, order=3), "difference")
-    # carve in phi direction
-    if deltaphi < 2 * np.pi:
-        segment = cylinder_segment(rmax*1.5, 2*rmax*1.5, startphi, deltaphi)
-        result = gdml_boolean(result, segment, 'intersection')
-    # cleanup
-    # carve in theta
-    endtheta = starttheta + deltatheta
-    nsteps = 16
+    pa = occ.addPoint(0, 0, rmin)
+    pb = occ.addPoint(0, 0, rmax)
+    arm = occ.addLine(pa, pb)
+    occ.rotate(getDimTags(1, arm), 0, 0, 0, 0, 1, 0, starttheta)
+    theta_section_dimTags = getDimTagsByDim(occ.revolve(getDimTags(1, arm), 0, 0, 0, 0, 1, 0, deltatheta), 2)
+    occ.rotate(theta_section_dimTags, 0, 0, 0, 0, 0, 1, startphi)
+    sphere_dimTags = occ.revolve(theta_section_dimTags, 0, 0, 0, 0, 0, 1, deltaphi)
+    sphere_tags_3d = getTagsByDim(sphere_dimTags, 3)
+    assert len(sphere_tags_3d) == 1, f'Generated {len(sphere_tags_3d)} solids instead of 1.'
+    return sphere_tags_3d[0]
 
-    if endtheta < np.pi:
-        bottom = _sphere_segment_theta(rmax*1.5, 0, endtheta, nsteps)
-        result = gdml_boolean(result, bottom, "intersection")
-    if starttheta > 0:
-        top = _sphere_segment_theta(rmax*1.5, starttheta, np.pi, nsteps)
-        result = gdml_boolean(result, top, "intersection")
-    # result.vertices, result.triangles, _ = pymesh.split_long_edges_raw(result.vertices, result.triangles, 
-    #     max_edge_length=0.1)
-    # result.vertices, result.triangles, _ = pymesh.collapse_short_edges_raw(result.vertices, result.triangles, rel_threshold=0.25)
-    result.vertices, result.triangles, _ = pymesh.collapse_short_edges_raw(result.vertices, result.triangles, abs_threshold = min(rmin/20, 10.))
-
-    return result
+def gdml_ellipsoid(ax, by, cz, zcut1, zcut2):
+    base_ellipsoid = occ.addSphere(0, 0, 0, ax)
+    squish_b, squish_c = by / ax, cz / ax
+    ellipsoid = occ.dilate(getDimTags(3, base_ellipsoid), 0, 0, 0, 1, squish_b, squish_c)
+    kill_box = occ.addBox( -ax, -by, zcut1, 2*ax, 2*by, (zcut2-zcut1) )
+    ellipsoid_tags = gdml_boolean(base_ellipsoid, kill_box, 'intersection')
+    return ellipsoid_tags 
 
 
+def gdml_torus(rmin, rmax, rtor, startphi, deltaphi):
+    pa = occ.addPoint(rmin, 0, 0)
+    pb = occ.addPoint(rmax, 0, 0)
+    arm = occ.addLine(pa, pb)
+    crossSection = getDimTagsByDim(occ.revolve(getDimTags(1, arm), 0, 0, 0, 0, 1, 0, np.pi*2), 2)
+    occ.translate(crossSection, rtor, 0, 0)
+    occ.rotate(crossSection, 0, 0, 0, 0, 0, 1, startphi)
+    torus_tags_3d = getTagsByDim(occ.revolve(crossSection, 0, 0, 0, 0, 0, 1, deltaphi), 3)
+    occ.remove(getDimTags(1, arm), recursive=True)
+    assert len(torus_tags_3d) == 1, f'Generated {len(torus_tags_3d)} solids instead of 1.'
+    return torus_tags_3d[0]
 
-def gdml_torus(rmin, rmax, rtor, startphi, deltaphi, nsteps=64, circle_steps=64):
-    result = make.torus(rmax, rtor, nsteps=nsteps)
-    # swap yz
-    result.vertices[:, [1, 2]] = result.vertices[:, [2, 1]]
-    result.vertices[:, 1] *= -1
-    # Cut in phi
-    if deltaphi < np.pi*2:
-        max_radius = rtor + rmax
-        max_height = rmax*2
-        segment = cylinder_segment(max_radius*1.5, max_height*1.5, startphi, deltaphi)
-        result = gdml_boolean(result, segment, 'intersection')
-    if rmin != 0:
-        inner = make.torus(rmin, rtor, nsteps=nsteps, circle_steps=circle_steps)
-        # swap yz
-        inner.vertices[:, [1, 2]] = inner.vertices[:, [2, 1]]
-        inner.vertices[:, 1] *= -1
-        result = gdml_boolean(result, inner, 'difference')
-    
-    return result
-
-
-def gdml_eltube(dx, dy, dz, nsteps=64):
-    ## NOTE: dz is HALF of total height! (don't ask why)
-    angles = np.linspace(0, 2*np.pi, nsteps, endpoint=False)
-    return make.linear_extrude(dx*np.cos(angles), dy*np.sin(angles), dz*2)
-    
+def gdml_eltube(dx, dy, dz):
+    if dx >= dy:
+        base_curve = occ.addEllipse(0, 0, -dz, dx, dy)
+    else:
+        base_curve = occ.addEllipse(0, 0, -dz, dy, dx, zAxis=[0, 0, 1], xAxis=[0, 1, 0])
+    base_curveLoop = occ.addCurveLoop([base_curve])
+    base = occ.addPlaneSurface([base_curveLoop])
+    tube_tags_3d = getTagsByDim(occ.extrude([(2, base)], 0, 0, 2*dz), 3)
+    assert len(tube_tags_3d) == 1, f'Generate {len(tube_tags_3d)} solids instead of 1.'
+    return tube_tags_3d[0]

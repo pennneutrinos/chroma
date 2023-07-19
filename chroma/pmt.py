@@ -22,7 +22,15 @@ def build_light_collector(pmt, a, b, d, rmin, rmax, surface, npoints=10):
 
     return Solid(lc_mesh, pmt.outer_material, pmt.outer_material, surface=surface)
 
-def build_pmt_shell(filename, outer_material, glass, nsteps=16):
+def build_light_collector_from_file(filename, outer_material,
+                                    surface, nsteps=48):
+    profile = read_csv(filename)
+    
+    mesh = rotate_extrude(profile[:,0], profile[:,1], nsteps)
+    solid = Solid(mesh, outer_material, outer_material, surface=surface)
+    return solid
+
+def build_pmt_shell_from_file(filename, outer_material, glass, nsteps=16):
     profile = read_csv(filename)
 
     # slice profile in half
@@ -34,10 +42,12 @@ def build_pmt_shell(filename, outer_material, glass, nsteps=16):
     # so that the mesh is closed
     profile[0,0] = 0.0
     profile[-1,0] = 0.0
+    return build_pmt_shell(profile, outer_material, glass, nsteps)
 
+def build_pmt_shell(profile, outer_material, glass, nsteps=16):
     return Solid(rotate_extrude(profile[:,0], profile[:,1], nsteps), glass, outer_material, color=0xeeffffff)
 
-def build_pmt(filename, glass_thickness, outer_material, glass,
+def build_pmt_from_file(filename, glass_thickness, outer_material, glass,
               vacuum, photocathode_surface, back_surface, nsteps=16):
     profile = read_csv(filename)
 
@@ -51,15 +61,18 @@ def build_pmt(filename, glass_thickness, outer_material, glass,
     profile[0,0] = 0.0
     profile[-1,0] = 0.0
 
+    return build_pmt(profile, glass_thickness, outer_material, glass, vacuum, photocathode_surface, back_surface, nsteps)
+
+def build_pmt(profile, glass_thickness, outer_material, glass,
+              vacuum, photocathode_surface, back_surface, nsteps=16):
+
     offset_profile = offset(profile, -glass_thickness)
 
     outer_envelope_mesh = rotate_extrude(profile[:,0], profile[:,1], nsteps)
     inner_envelope_mesh = rotate_extrude(offset_profile[:,0], offset_profile[:,1], nsteps)
 
     outer_envelope = Solid(outer_envelope_mesh, glass, outer_material)
-
     photocathode = np.mean(inner_envelope_mesh.assemble(), axis=1)[:,1] > 0
-
     inner_envelope = Solid(inner_envelope_mesh, vacuum, glass, surface=np.where(photocathode, photocathode_surface, back_surface), color=np.where(photocathode, 0xff00, 0xff0000))
 
     pmt = outer_envelope + inner_envelope
@@ -71,11 +84,3 @@ def build_pmt(filename, glass_thickness, outer_material, glass,
     pmt.nsteps = nsteps
 
     return pmt
-
-def build_light_collector_from_file(filename, outer_material,
-                                    surface, nsteps=48):
-    profile = read_csv(filename)
-    
-    mesh = rotate_extrude(profile[:,0], profile[:,1], nsteps)
-    solid = Solid(mesh, outer_material, outer_material, surface=surface)
-    return solid

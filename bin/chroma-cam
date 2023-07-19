@@ -17,7 +17,7 @@ if __name__ == '__main__':
     parser.add_option('--debug', dest='debug', action='store_true', 
                       default=False, help='Start python debugger on exception')
     parser.add_option('-r', '--resolution', dest='resolution',
-                      help='specify window resolution', default='1024,576')
+                      help='specify window resolution', default='1920,1080')
     parser.add_option('-i', dest='io_file', default=None)
     options, args = parser.parse_args()
 

@@ -9,6 +9,7 @@ from chroma.geometry import Geometry, Solid, Mesh, vacuum
 from chroma.detector import Detector
 from chroma.stl import mesh_from_stl
 from chroma.gpu import create_cuda_context
+from chroma.gdml import GDMLLoader
 
 def load_geometry_from_string(geometry_str, 
                               auto_build_bvh=True, read_bvh_cache=True,
@@ -85,6 +86,12 @@ def load_geometry_from_string(geometry_str,
         mesh = mesh_from_stl(geometry_id)
         geometry = Geometry()
         geometry.add_solid(Solid(mesh, vacuum, vacuum, color=0x33ffffff))
+        geometry.flatten()
+
+    if os.path.exists(geometry_id) and \
+            geometry_id.lower().endswith('.gdml'):
+        gdml_load = GDMLLoader(geometry_id)
+        geometry = gdml_load.build_detector()
         geometry.flatten()
 
     elif geometry_id.startswith('@'):

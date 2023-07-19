@@ -28,6 +28,8 @@ if not hasattr(ROOT, 'Vertex') or not hasattr(ROOT, 'Channel'):
     # no longer an issue for root 6+
     # ROOT.gSystem.Load('libCint')
     # Import this C file for access to data structure
+    if not hasattr(ROOT, 'Event'):
+        print(f"Critical Warning: ROOT library ({home_root_C}) is missing the Event class")
     ROOT.gROOT.ProcessLine('.L '+home_root_C+'+')
 
 
@@ -346,10 +348,12 @@ class RootWriter(object):
                               photons.wavelengths, photons.t,
                               photons.last_hit_triangles, photons.flags, 
                               photons.channel)
+        else:
+            self.ev.photon_tracks.resize(0)
+        if pyev.photon_parent_trackids is not None:
             self.ev.photon_parent_trackids.resize(len(pyev.photon_parent_trackids))
             np.asarray(self.ev.photon_parent_trackids)[:] = pyev.photon_parent_trackids
         else:
-            self.ev.photon_tracks.resize(0)
             self.ev.photon_parent_trackids.resize(0)
         
         if pyev.vertices is not None:

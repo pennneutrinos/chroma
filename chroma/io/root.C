@@ -207,7 +207,7 @@ void fill_photons(std::vector<Photon> &photons,
   }
 }
 
-#ifdef __MAKECINT__
+#ifdef __ROOTCLING__
 #pragma link C++ class Vertex+;
 #pragma link C++ class Photon+;
 #pragma link C++ class Event+;
