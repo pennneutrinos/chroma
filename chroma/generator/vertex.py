@@ -43,7 +43,6 @@ def flat(e_lo, e_hi):
 
 def particle_gun(particle_name_iter, pos_iter, dir_iter, ke_iter, 
                  t0_iter=constant(0.0), start_id=0):
-    print("Gun Do Call")
     for i, particle_name, pos, dir, ke, t0 in zip(count(start_id), particle_name_iter, pos_iter, dir_iter, ke_iter, t0_iter):
         dir = dir/norm(dir)
         print("dir", dir)

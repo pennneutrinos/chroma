@@ -39,12 +39,18 @@ class G4GeneratorProcess(multiprocessing.Process):
         photon_socket.send(b'READY')
 
         while True:
+            print("process do run 4-")
             ev = vertex_socket.recv_pyobj()
+            #print(f'.... {ev.particle_name}')
             if self.tracking:
+                print("process do run 5", ev.vertices)
                 ev.vertices,ev.photons_beg,ev.photon_parent_trackids = gen.generate_photons(ev.vertices,tracking=self.tracking)
             else:
+                print("process do run 6")
                 ev.vertices,ev.photons_beg = gen.generate_photons(ev.vertices,tracking=self.tracking)
+            print("process do run 7", ev.vertices, ev.photons_beg, ev.photon_parent_trackids, ev)
             photon_socket.send_pyobj(ev)
+            print("process do run 8", f'address is {self.photon_socket_address}')
 
 def partition(num, partitions):
     """Generator that returns num//partitions, with the last item including
@@ -108,7 +114,6 @@ class G4ParallelGenerator(object):
                 assert msg == b'READY'
             self.processes_initialized = True
             
-        print('boink')
         #let it get ahead, but not too far ahead
         self.semaphore = threading.Semaphore(2*len(self.processes)) 
         self.processed = 0

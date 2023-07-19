@@ -1,5 +1,5 @@
 from setuptools import setup, find_packages, Extension
-from pybind11.setup_helpers import Pybind11Extension
+#from pybind11.setup_helpers import Pybind11Extension
 import subprocess
 import os
 
@@ -58,5 +58,5 @@ setup(
  
     setup_requires = [],
     install_requires = ['uncertainties','pyzmq', 'pycuda', 'geant4-pybind', 'gmsh',
-                        'numpy>=1.6', 'pygame', 'nose', 'sphinx', 'pybind11'],
+                        'numpy>=1.6', 'pygame', 'nose', 'sphinx'],
 )

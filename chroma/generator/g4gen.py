@@ -1,5 +1,4 @@
 #from chroma.generator.mute import *
-
 import numpy as np
 from chroma.event import Photons, Vertex, Steps
 from chroma.tools import argsort_direction
@@ -69,19 +68,21 @@ class G4Detector(G4VUserDetectorConstruction):
             prop_table = self.world_material.GetMaterialPropertiesTable()
             prop_table.DumpTable()
 
-            solidWorld = G4Box('world', 100*m, 100*m, 100*m)
-            logicWorld = G4LogicalVolume(solidWorld, self.world_material, 'world')
-            physicalWorld = G4PVPlacement(G4RotationMatrix(), G4ThreeVector(0, 0, 0),
-                                          'world', logicWorld, None, False, 0)
+            # FIX!!: Larger extent causes segfault more often
+            extent = 10*m
+            solidWorld = G4Box('worldBox', extent, extent, extent)
+            logicWorld = G4LogicalVolume(solidWorld, self.world_material, 'worldLogical')
+            physicalWorld = G4PVPlacement(None, G4ThreeVector(0, 0, 0), logicWorld, 'worldPhysical', 
+                                          None, False, 0, True)
             self.world = physicalWorld
         else:
             self.world_material = nist.FindOrBuildMaterial("G4_PLASTIC_SC_VINYLTOLUENE")
             self.world_material = G4Material.GetMaterial("G4_PLASTIC_SC_VINYLTOLUENE")
 
-            solidWorld = G4Box('world', 100*m, 100*m, 100*m)
-            logicWorld = G4LogicalVolume(solidWorld, self.world_material, 'world')
-            physicalWorld = G4PVPlacement(G4RotationMatrix(), G4ThreeVector(0, 0, 0),
-                                          'world', logicWorld, None, False, 0)
+            solidWorld = G4Box('worldBox', extent, extent, extent)
+            logicWorld = G4LogicalVolume(solidWorld, self.world_material, 'worldLogical')
+            physicalWorld = G4PVPlacement(None, G4ThreeVector(0, 0, 0), logicWorld, 'worldPhysical', 
+                                          None, False, 0, True)
             self.world = physicalWorld
         return self.world
 
@@ -95,7 +96,7 @@ class G4Primary(G4VUserPrimaryGeneratorAction):
         self.vertex = vertex
 
     def GeneratePrimaries(self, anEvent):
-        #self.particle_gun.SetParticleByName(self.vertex.particle_name)
+        print('GeneratePrimaries')
         chosen_particle = self.particle_table.FindParticle(self.vertex.particle_name)
         self.particle_gun.SetParticleDefinition(chosen_particle)
         #Geant4 seems to call 'ParticleEnergy' KineticEnergy - see G4ParticleGun 
@@ -112,6 +113,7 @@ class G4Primary(G4VUserPrimaryGeneratorAction):
         if self.vertex.pol is not None:
             self.particle_gun.SetParticlePolarization(G4ThreeVector(*(self.vertex.pol)).unit())
         self.particle_gun.GeneratePrimaryVertex(anEvent)
+        print('GeneratePrimaries done')
 
 class G4Generator(object):
     def __init__(self, material, seed=None):
@@ -173,15 +175,15 @@ class G4Generator(object):
 
         # Initialization
         self.run_manager.Initialize()
-        self.generate_photons([Vertex('e-', (0,0,0), (1,0,0), 5.0, 1.0)], mute=False, tracking=True)
-        #self.generate_photons([Vertex('opticalphoton', (0,0,0), (1,0,0), 2e-6, 1.0)], mute=False, tracking=True)
+        #self.generate_photons([Vertex('e-', (0,0,0), (1,0,0), 5.0, 1.0)], mute=False, tracking=False)
         # Testing Visualization
         #visManager.Initialize()
-        ui = G4UIExecutive(1, ['--interactive'])
+        #ui = G4UIExecutive(1, ['--interactive'])
         #UImanager.ApplyCommand("/control/execute vis.mac")
         #ui.SessionStart()
 
     def _extract_photons_from_tracking_action(self, sort=False):
+        print(f"extracting photons from tracking action")
         n = self.tracking_action.GetNumPhotons()
         print(f"extracted {n} photons!!")
         pos = np.zeros(shape=(n,3), dtype=np.float32)
@@ -222,6 +224,8 @@ class G4Generator(object):
                       track.getStepDX(),track.getStepDY(),track.getStepDZ(),track.getStepKE(),
                       track.getStepEDep(),track.getStepQEDep())
         children = [self._extract_vertex_from_stepping_action(track.getChildTrackID(id)) for id in range(track.getNumChildren())]
+        if steps.x.size == 0:
+            return None
         return Vertex(track.name, np.array([steps.x[0],steps.y[0],steps.z[0]]), 
                         np.array([steps.dx[0],steps.dy[0],steps.dz[0]]), 
                         steps.ke[0], steps.t[0], steps=steps, children=children, trackid=index, pdgcode=track.pdg_code)
@@ -249,31 +253,36 @@ class G4Generator(object):
         self.stepping_action.EnableTracking(tracking);
 
         photons = Photons()
-        if tracking:
-            photon_parent_tracks = []
+        print("photons created")
+        photon_parent_tracks = []
         
         try:
             tracked_vertices = []
             for vertex in vertices:
+                print("gl beam on")
                 self.primary_generator.set_vertex(vertex)
+                print("primary generator set")
                 self.tracking_action.Clear()
+                print("tracking action clear")
                 self.stepping_action.ClearTracking()
+                print("stepping action clear: can die here in beam on")
                 self.run_manager.BeamOn(1)
+                print("beam on suceeded")
 
                 if tracking:
                     vertex = self._extract_vertex_from_stepping_action()
                     photon_parent_tracks.append(self.tracking_action.GetParentTrackID().astype(np.int32))
+                print("beam brrrr")
                 tracked_vertices.append(vertex)
                 photons += self._extract_photons_from_tracking_action()
+                print("photons push")
             if tracking:
                 photon_parent_tracks = [track for track in photon_parent_tracks if len(track)>0]
                 photon_parent_tracks = np.concatenate(photon_parent_tracks) if len(photon_parent_tracks) > 0 else []
-                
         finally:
             if mute:
                 pass
-                #g4unmute()
-        
+        print("It do what it do")
         if tracking:
             return (tracked_vertices,photons,photon_parent_tracks)
         else:

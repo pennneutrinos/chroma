@@ -46,6 +46,7 @@ class Simulation(object):
         self.context = gpu.create_cuda_context(cuda_device)
 
         if hasattr(detector, 'num_channels'):
+            print(f'Using GPU detector with {detector.num_channels()} channels.')
             if detector.num_channels() > 0:
                 self.gpu_geometry = gpu.GPUDetector(detector)
                 self.gpu_daq = gpu.GPUDaq(self.gpu_geometry)
@@ -188,7 +189,6 @@ class Simulation(object):
                                                 run_daq=run_daq, max_steps=max_steps)
                 nphotons = 0
                 batch_events = []
-        print(" pass " )        
         if len(batch_events) != 0:
             yield from self._simulate_batch(batch_events,
                                             keep_photons_beg=keep_photons_beg,
