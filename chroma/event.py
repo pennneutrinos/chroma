@@ -1,4 +1,5 @@
 import numpy as np
+from particle import Particle
 
 # Photon history bits (see photon.h for source)
 NO_HIT           = 0x1 << 0
@@ -30,7 +31,7 @@ class Steps(object):
     
 
 class Vertex(object):
-    def __init__(self, particle_name, pos, dir, ke, t0=0.0, pol=None, steps=None, children=None, trackid=-1, pdgcode=-1):
+    def __init__(self, particle_name, pos, dir, ke, t0=0.0, pol=None, steps=None, children=None, trackid=-1, pdgcode=None):
         '''Create a particle vertex.
 
            particle_name: string
@@ -62,7 +63,7 @@ class Vertex(object):
         self.steps = steps
         self.children = children
         self.trackid = trackid
-        self.pdgcode = pdgcode
+        self.pdgcode = Particle.from_evtgen_name(self.particle_name).pdgid if pdgcode == None else pdgcode
         
     def __str__(self):
         return 'Vertex('+self.particle_name+',ke='+str(self.ke)+',steps='+str(True if self.steps else False)+')'
@@ -139,7 +140,8 @@ class Photons(object):
             self.channel = np.zeros(len(pos), dtype=np.uint32)
         else:
             self.channel = np.asarray(channel, dtype=np.uint32)
-            
+
+    @staticmethod 
     def join(photon_list,concatenate=True):
         '''Concatenates many photon objects together efficiently'''
         if concatenate: #internally lists
