@@ -43,7 +43,7 @@ class RootSerializer(Serializer):
         self._event_buffer = {}
 
     def open(self) -> None:
-        self._file = uproot.recreate(self._fname)
+        self._file = uproot.recreate(self._fname, compression=uproot.LZ4(4))
 
     def close(self) -> None:
         if np.any([len(data) > 0 for data in self._event_buffer.values()]):
@@ -86,15 +86,15 @@ class RootSerializer(Serializer):
         return size
 
 _mc_particle_fields: Dict = {
-    'mcpdg': np.dtype('i4'),
-    'mcx':   np.dtype('f8'),
-    'mcy':   np.dtype('f8'),
-    'mcz':   np.dtype('f8'),
-    'mcu':   np.dtype('f8'),
-    'mcv':   np.dtype('f8'),
-    'mcw':   np.dtype('f8'),
-    'mct':   np.dtype('f8'),
-    'mcke':  np.dtype('f8'),
+    'pdg': np.dtype('i4'),
+    'x':   np.dtype('f8'),
+    'y':   np.dtype('f8'),
+    'z':   np.dtype('f8'),
+    'u':   np.dtype('f8'),
+    'v':   np.dtype('f8'),
+    'w':   np.dtype('f8'),
+    't':   np.dtype('f8'),
+    'ke':  np.dtype('f8'),
 }
 
 class NTupleWriter(object):
@@ -147,9 +147,11 @@ class NTupleWriter(object):
         if self._write_hits:
             if event.channels is not None:
                 hit_channels, hit_times, hit_charge = event.channels.hit_channels()
-                event_dict['hit_pmt'] = np.asarray(hit_channels)
-                event_dict['hit_time'] = np.asarray(hit_times)
-                event_dict['hit_charge'] = np.asarray(hit_charge)
+                hits_dict = {}
+                hits_dict['pmt'] = np.asarray(hit_channels)
+                hits_dict['time'] = np.asarray(hit_times)
+                hits_dict['charge'] = np.asarray(hit_charge)
+                event_dict['hit'] = ak.zip(hits_dict)
         self._serializer.write_event(event_dict)
 
     def close(self) -> None:
@@ -162,18 +164,18 @@ class NTupleWriter(object):
                 vertex_dict[field] = []
         vertex: Vertex
         for vertex in vertices:
-            vertex_dict['mcpdg'].append(vertex.pdgcode)
-            vertex_dict['mcx'].append(vertex.pos[0])
-            vertex_dict['mcy'].append(vertex.pos[1])
-            vertex_dict['mcz'].append(vertex.pos[2])
-            vertex_dict['mcu'].append(vertex.dir[0])
-            vertex_dict['mcv'].append(vertex.dir[1])
-            vertex_dict['mcw'].append(vertex.dir[2])
-            vertex_dict['mct'].append(vertex.t0)
-            vertex_dict['mcke'].append(vertex.ke)
+            vertex_dict['pdg'].append(vertex.pdgcode)
+            vertex_dict['x'].append(vertex.pos[0])
+            vertex_dict['y'].append(vertex.pos[1])
+            vertex_dict['z'].append(vertex.pos[2])
+            vertex_dict['u'].append(vertex.dir[0])
+            vertex_dict['v'].append(vertex.dir[1])
+            vertex_dict['w'].append(vertex.dir[2])
+            vertex_dict['t'].append(vertex.t0)
+            vertex_dict['ke'].append(vertex.ke)
         for field in _mc_particle_fields:
             vertex_dict[field] = np.asarray(vertex_dict[field])
-        event_dict['vertices'] = ak.zip(vertex_dict)
+        event_dict['vertex'] = ak.zip(vertex_dict)
 
     @staticmethod
     def _fill_photons_fields(event_dict: Dict[str, Any], prefix: str, photons: Photons, write_channel: bool = False) -> None:
@@ -186,7 +188,7 @@ class NTupleWriter(object):
         photon_dict['w'] = np.asarray(photons.dir[:,2])
         photon_dict['t'] = np.asarray(photons.t)
         photon_dict['wavelength'] = np.asarray(photons.wavelengths)
-        photon_dict['flags'] = np.asarray(photons.flags)
+        photon_dict['flag'] = np.asarray(photons.flags)
         if write_channel:
             photon_dict['channel'] = np.asarray(photons.channel)
         event_dict[prefix] = ak.zip(photon_dict)
