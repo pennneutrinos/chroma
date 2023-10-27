@@ -88,26 +88,34 @@ class G4ParallelGenerator(object):
         self.processes_initialized = False
     
     def generate_events(self, vertex_iterator):
-        if not self.processes_initialized:
-            # Verify everyone is running and connected to avoid
-            # sending all the events to one client.
-            for i in range(len(self.processes)):
-                msg = self.photon_socket.recv()
-                assert msg == b'READY'
-            self.processes_initialized = True
-            
-        #let it get ahead, but not too far ahead
-        self.semaphore = threading.Semaphore(2*len(self.processes)) 
-        self.processed = 0
-        self.length = -1
-        sender_thread = threading.Thread(target=vertex_sender, args=(vertex_iterator, self.zmq_context, self.vertex_address, self))
-        sender_thread.start()
-        p = zmq.Poller()
-        p.register(self.photon_socket, zmq.POLLIN)
+        try:
+            if not self.processes_initialized:
+                # Verify everyone is running and connected to avoid
+                # sending all the events to one client.
+                for i in range(len(self.processes)):
+                    msg = self.photon_socket.recv()
+                    assert msg == b'READY'
+                self.processes_initialized = True
+                
+            #let it get ahead, but not too far ahead
+            self.semaphore = threading.Semaphore(2*len(self.processes)) 
+            self.processed = 0
+            self.length = -1
+            sender_thread = threading.Thread(target=vertex_sender, args=(vertex_iterator, self.zmq_context, self.vertex_address, self))
+            sender_thread.start()
+            p = zmq.Poller()
+            p.register(self.photon_socket, zmq.POLLIN)
 
-        while self.length < 0 or self.processed < self.length:
-            msgs = dict(p.poll(5000)) 
-            if self.photon_socket in msgs and msgs[self.photon_socket] == zmq.POLLIN:
-                yield self.photon_socket.recv_pyobj()
-                self.semaphore.release()
-                self.processed += 1
+            while self.length < 0 or self.processed < self.length:
+                msgs = dict(p.poll(5000)) 
+                if self.photon_socket in msgs and msgs[self.photon_socket] == zmq.POLLIN:
+                    yield self.photon_socket.recv_pyobj()
+                    self.semaphore.release()
+                    self.processed += 1
+            # Clean up all threads
+            sender_thread.join()
+        except KeyboardInterrupt:
+            for proc in self.processes:
+                proc.terminate()
+            raise
+
