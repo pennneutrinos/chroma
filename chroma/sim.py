@@ -140,7 +140,7 @@ class Simulation(object):
 
     def simulate(self, iterable, keep_photons_beg=False, keep_photons_end=False,
                  keep_hits=True, keep_flat_hits=True, run_daq=False, max_steps=1000,
-                 photons_per_batch=1000000):
+                 photons_per_batch=1000000, evid_start=0):
         if isinstance(iterable, event.Photons):
             first_element, iterable = iterable, [iterable]
         else:
@@ -156,9 +156,10 @@ class Simulation(object):
 
         nphotons = 0
         batch_events = []
-        
+        evid = evid_start
         for ev in iterable:
-            
+            ev.id = evid
+            evid += 1
             ev.nphotons = len(ev.photons_beg)
             ev.photons_beg.evidx[:] = len(batch_events)
             
