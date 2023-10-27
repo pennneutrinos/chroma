@@ -242,6 +242,51 @@ def gdml_torus(rmin, rmax, rtor, startphi, deltaphi):
     assert len(torus_tags_3d) == 1, f'Generated {len(torus_tags_3d)} solids instead of 1.'
     return torus_tags_3d[0]
 
+
+def gdml_torusStack(zedge, rhoedge, zorigin):
+    assert len(zedge) == len(rhoedge), "zedge and rhoedge must have the same length"
+    assert len(zedge) > 1, "must have at least one segment"
+    assert len(zorigin) == len(zedge) - 1, "zorigin must have one less element than zedge"
+    assert all(zedge[i] > zedge[i+1] for i in range(len(zedge)-1)), "zedge must be monotonically decreasing"
+    # compute origin coordinates
+    z0 = np.asarray(zorigin)
+    z1 = np.asarray(zedge[:-1])
+    z2 = np.asarray(zedge[1:])
+    r1 = np.asarray(rhoedge[:-1])
+    r2 = np.asarray(rhoedge[1:])
+    # if r1 = r2, torus is actually a cylinder. This will show up as a division by zero here
+    with np.errstate(divide='ignore'):
+        r0 = (r2**2 + (z2-z0)**2 - r1**2 - (z1-z0)**2) / (2*r2 - 2*r1)
+    # Create side profile
+    edges = [occ.addPoint(r, 0, z) for r, z in zip(rhoedge, zedge)]
+    arcs = []
+    for ro, zo, edge1, edge2 in zip(r0, z0, edges[:-1], edges[1:]):
+        if np.isfinite(ro):
+            origin = occ.addPoint(ro, 0, zo)
+            arcs.append(occ.addCircleArc(edge1, origin, edge2))
+            occ.remove(getDimTags(0, origin))
+        else: # straight part
+            arcs.append(occ.addLine(edge1, edge2))
+    if rhoedge[-1] != 0: # profile is not closed loop, add a straight bottom section to close it off
+        lastPoint = occ.addPoint(0, 0, zedge[-1])
+        arcs.append(occ.addLine(edges[-1], lastPoint))
+        edges.append(lastPoint)
+
+    center = occ.addPoint(0, 0, 0)
+    lineToTop = occ.addLine(center, edges[0])
+    lineFromBottom = occ.addLine(edges[-1], center)
+    curveLoop = occ.addCurveLoop([lineToTop, *arcs, lineFromBottom])
+    plane = occ.addPlaneSurface([curveLoop])
+    torus_stack_3d = getTagsByDim(
+        occ.revolve([[2, plane]], 
+                    0, 0, 0, 
+                    0, 0, 1, 
+                    2*np.pi), 
+    3)
+    occ.remove(getDimTags(2, plane), recursive=True)
+    return torus_stack_3d[0]
+
+
 def gdml_eltube(dx, dy, dz):
     if dx >= dy:
         base_curve = occ.addEllipse(0, 0, -dz, dx, dy)
