@@ -30,14 +30,14 @@ def get_val(elem, attr, default=None):
     assert txt is not None or default is not None, 'Missing attribute: '+attr
     return eval(txt, {}, {}) if txt is not None else default
 
-def get_zplanes(elem, tag='zplane', unit_attr='lunit'):
+def get_daughters_as_dict(elem, tag='zplane', unit_attr='lunit', add_rmin=True):
     '''Return the children elements with the `tag` as an attribute dictionary '''
     scale = _units[elem.get(unit_attr)] if unit_attr is not None else 1.0
     planes = elem.findall(tag)
     result = deepcopy([plane.attrib for plane in planes])
     for r in result:
         r.update((x, float(y)*scale) for x, y in r.items())
-        if 'rmin' not in r:
+        if add_rmin and 'rmin' not in r:
             r['rmin'] = 0
     return result
 
@@ -57,13 +57,13 @@ def orb(elem):
 
 def polycone(elem):
     startphi, deltaphi = get_vals(elem, ['startphi', 'deltaphi'], unit_attr='aunit')
-    zplanes = get_zplanes(elem)
+    zplanes = get_daughters_as_dict(elem)
     return gen_mesh.gdml_polycone(startphi, deltaphi, zplanes)
 
 def polyhedra(elem):
     startphi, deltaphi = get_vals(elem, ['startphi', 'deltaphi'], unit_attr='aunit')
     numsides = int(elem.get('numsides'))
-    zplanes = get_zplanes(elem)
+    zplanes = get_daughters_as_dict(elem)
     return gen_mesh.gdml_polyhedra(startphi, deltaphi, numsides, zplanes)
 
 def sphere(elem):
@@ -83,8 +83,20 @@ def torus(elem):
 
 def tube(elem):
     rmin, rmax, z = get_vals(elem, ['rmin', 'rmax', 'z'], default_vals=[0.0, None, 0.0],unit_attr='lunit')
+    if z < 1e-2:
+        logger.warn(f"Very thin tube is found, with thickness of {z} mm. Skipping!")
+        return
     startphi, deltaphi = get_vals(elem, ['startphi', 'deltaphi'], default_vals=[0.0, None], unit_attr='aunit')
     return gen_mesh.gdml_tube(rmin, rmax, z, startphi, deltaphi)
+
+def torusstack(elem):
+    edges = get_daughters_as_dict(elem, tag='edge', unit_attr='lunit', add_rmin=False)
+    origins = get_daughters_as_dict(elem, tag='origin', unit_attr='lunit', add_rmin=False)
+    rho_edges   = [entry['rho'] for entry in edges]
+    z_edges     = [entry['z'] for entry in edges]
+    z_origins   = [entry['z'] for entry in origins]
+    rho_origins = [entry['rho'] for entry in origins]
+    return gen_mesh.gdml_torusStack(rho_edges, z_edges, rho_origins, z_origins)
 
 def notImplemented(elem):
     raise NotImplementedError(f'{elem.tag} is not implemented')
