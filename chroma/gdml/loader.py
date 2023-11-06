@@ -16,23 +16,15 @@ from chroma.gdml import gen_mesh
 import gmsh
 
     
-def generate_mesh_from_obj():
-    elementTags, nodeTags = gmsh.model.mesh.getElementsByType(2)
+def retrieve_mesh_from_gmsh():
+    faceTags, nodeTags = gmsh.model.mesh.getElementsByType(2)
+    # three nodetags coorespond to one facetag
     faces = np.asarray(nodeTags)
+    faces -= 1 # because tags are 1-indexed
     faces = np.reshape(faces, (-1, 3))
-    node_unique = list(set(nodeTags))
     nodeTags, coords, _ = gmsh.model.mesh.getNodes()
-    coords = np.asarray(coords)
     coords = np.reshape(coords, (-1, 3))
-
-    coord_dict = {}
-    for nodeTag, coord in zip(nodeTags, coords):
-        coord_dict[nodeTag] = coord
-
-    verts = np.zeros((int(np.max(node_unique)+1), 3))
-    for node in node_unique:
-        verts[node] = coord_dict.get(node)
-    return verts, faces
+    return coords, faces
 
 
 #To convert length and angle units to cm and radians
@@ -191,6 +183,7 @@ class GDMLLoader:
             'sphere':           helper.sphere,
             'torus':            helper.torus,
             'tube':             helper.tube,
+            'torusstack':       helper.torusstack,
             'opticalsurface':   helper.ignore,
         }
         generator = dispatcher.get(mesh_type, helper.notImplemented)
@@ -226,6 +219,7 @@ class GDMLLoader:
         q.append([self.world, np.zeros(3), np.identity(3), None])
         while len(q):
             v, pos, rot, parent_material_ref = q.pop()
+            logger.debug(f"Generating volume {v.name}\tsolid ref: {v.solid_ref}")
             for child, c_pos, c_rot in zip(v.children, v.child_pos, v.child_rot):
                 c_pos = self.get_vals(c_pos) if c_pos is not None else np.zeros(3)
                 c_rot = self.get_vals(c_rot) if c_rot is not None else np.identity(3)
@@ -233,7 +227,7 @@ class GDMLLoader:
                 x_rot = make_rotation_matrix(c_rot[0], [1, 0, 0])
                 y_rot = make_rotation_matrix(c_rot[1], [0, 1, 0])
                 z_rot = make_rotation_matrix(c_rot[2], [0, 0, 1])
-                c_rot = (rot @ x_rot @ y_rot @ z_rot) #FIXME verify this order
+                c_rot = (rot @ x_rot @ y_rot @ z_rot)
                 q.append([child, c_pos, c_rot, v.material_ref])
             classification, kwargs = volume_classifier(v.name, v.material_ref, parent_material_ref)
             if classification == 'omit':
@@ -249,8 +243,11 @@ class GDMLLoader:
                 gmsh.model.mesh.generate(2)
                 for _ in range(self.refinement_order):
                     gmsh.model.mesh.refine()
-                verts, faces = generate_mesh_from_obj()
-                mesh = Mesh(verts, faces)
+                verts, faces = retrieve_mesh_from_gmsh()
+                if len(faces) == 0:
+                    mesh = None
+                else:
+                    mesh = Mesh(verts, faces)
                 self.mesh_cache[v.solid_ref] = deepcopy(mesh)
             if mesh is None:
                 continue
