@@ -106,6 +106,8 @@ class GDMLLoader:
         gmsh.initialize()
         gmsh.option.setNumber('Mesh.MeshSizeFromCurvature', 32) # number of meshes per 2*pi radian
         gmsh.option.setNumber('Mesh.MinimumCircleNodes', 32) # number of nodes per circle
+        gmsh.option.setNumber('General.Verbosity', 2)
+        gmsh.option.setNumber('Geometry.ToleranceBoolean', 0.001)
         gmsh.model.add(self.gdml_file)
 
         
@@ -172,6 +174,7 @@ class GDMLLoader:
                 if entry is not None:
                     posrot_vals[i] = helper.get_vals(entry)
             noUnion = self.noUnionClassifier(solid_ref)
+            logger.info(f"Performing {mesh_type} for {solid_ref}")
             mesh = gen_mesh.gdml_boolean(a, b, mesh_type, firstpos=posrot_vals[0], firstrot=posrot_vals[1], pos=posrot_vals[2], rot=posrot_vals[3], noUnion=noUnion)
             return mesh
         dispatcher = {
