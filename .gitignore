@@ -14,3 +14,4 @@ distribute*.egg
 *.simg
 
 .vscode
+env/
