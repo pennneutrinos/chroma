@@ -1,3 +1,4 @@
+import itertools
 import xml.etree.ElementTree as et
 import numpy as np
 from collections import deque
@@ -88,6 +89,16 @@ def sphere(elem):
         unit_attr='aunit'
     )
     return gen_mesh.gdml_sphere(rmin, rmax, startphi, deltaphi, starttheta, deltatheta)
+
+
+def tessellated(elem, all_vertex_positions):
+    triangle_elements = elem.findall('triangular')
+    triangle_vertex_tags = [[triangle.get('vertex1'), triangle.get('vertex2'), triangle.get('vertex3')]
+                            for triangle in triangle_elements]
+    vertex_tags_unique = list(set(itertools.chain(*triangle_vertex_tags)))
+    vertex_positions = [all_vertex_positions[tag] for tag in vertex_tags_unique]
+    triangles = [[vertex_tags_unique.index(tag) for tag in triangle] for triangle in triangle_vertex_tags]
+    return vertex_positions, triangles
 
 
 def torus(elem):

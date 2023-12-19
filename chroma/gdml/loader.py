@@ -109,6 +109,7 @@ class GDMLLoader:
         world_ref = gdml.find('setup').find('world').get('ref')
         self.world = Volume(world_ref, self)
         self.mesh_cache = {}
+        self.vertex_positions = {vertex.get('name'): helper.get_vals(vertex) for vertex in define.findall('position')}
 
         ## Initialize gmsh
         gmsh.initialize()
@@ -177,6 +178,7 @@ class GDMLLoader:
             'sphere': helper.sphere,
             'torus': helper.torus,
             'tube': helper.tube,
+            'tessellated': lambda elem: helper.tessellated(elem, self.vertex_positions),  # pass vertex cache to helper
             'torusstack': helper.torusstack,
             'opticalsurface': helper.ignore,
         }
