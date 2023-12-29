@@ -4,6 +4,7 @@ import numpy as np
 from collections import deque
 
 from chroma.gdml import gen_mesh
+from chroma.geometry import Mesh
 from chroma.log import logger
 from copy import deepcopy
 
@@ -98,7 +99,7 @@ def tessellated(elem, all_vertex_positions):
     vertex_tags_unique = list(set(itertools.chain(*triangle_vertex_tags)))
     vertex_positions = [all_vertex_positions[tag] for tag in vertex_tags_unique]
     triangles = [[vertex_tags_unique.index(tag) for tag in triangle] for triangle in triangle_vertex_tags]
-    return vertex_positions, triangles
+    return Mesh(vertex_positions, triangles)
 
 
 def torus(elem):

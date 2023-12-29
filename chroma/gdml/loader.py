@@ -16,15 +16,33 @@ from chroma.gdml import gen_mesh
 import gmsh
 
 
-def retrieve_mesh_from_gmsh():
-    faceTags, nodeTags = gmsh.model.mesh.getElementsByType(2)
-    # three nodetags coorespond to one facetag
-    faces = np.asarray(nodeTags)
+def retrieve_mesh(tag_or_mesh, refinement_order: int = 0) -> Mesh:
+    '''
+    Processes solid into a chroma Mesh.
+    tag_or_mesh is either a gmsh tag that relates to the root solid, or a chroma.Mesh object.
+    If tag_or_mesh is a gmsh tag, apply downstream gmsh mesh generation routine and package the generated mesh into a
+    chorma.Mesh object. If tag_or_mesh is already a mesh, do nothing. Simply return the mesh.
+    Returns a chroma_mesh or None.
+    '''
+    if isinstance(tag_or_mesh, Mesh):
+        return tag_or_mesh
+    gmsh.model.occ.synchronize()
+    gmsh.model.mesh.generate(2)
+    for _ in range(refinement_order):
+        gmsh.model.mesh.refine()
+    face_tags, node_tags = gmsh.model.mesh.getElementsByType(2)
+    # three node_tags correspond to one face_tag
+    faces = np.asarray(node_tags)
     faces -= 1  # because tags are 1-indexed
     faces = np.reshape(faces, (-1, 3))
-    nodeTags, coords, _ = gmsh.model.mesh.getNodes()
+    node_tags, coords, _ = gmsh.model.mesh.getNodes()
     coords = np.reshape(coords, (-1, 3))
-    return coords, faces
+    # return coords, faces
+    if len(faces) == 0:
+        mesh = None
+    else:
+        mesh = Mesh(coords, faces)
+    return mesh
 
 
 # To convert length and angle units to cm and radians
@@ -34,7 +52,7 @@ units = {'cm': 1, 'mm': 0.1, 'm': 100, 'deg': np.pi / 180, 'rad': 1}
 class Volume:
     '''
     Represents a GDML volume and the volumes placed inside it (physvol) as 
-    childeren. Keeps track of position and rotation of the GDML solid.
+    children. Keeps track of position and rotation of the GDML solid.
     '''
 
     def __init__(self, name, gdml):
@@ -89,6 +107,7 @@ class GDMLLoader:
         ''' 
         Read a geometry from the specified GDML file.
         '''
+        # GDML mesh refinement order. This massively increases the number of triangles. Be careful!
         self.refinement_order = refinement_order
 
         self.gdml_file = gdml_file
@@ -111,7 +130,7 @@ class GDMLLoader:
         self.mesh_cache = {}
         self.vertex_positions = {vertex.get('name'): helper.get_vals(vertex) for vertex in define.findall('position')}
 
-        ## Initialize gmsh
+        # Initialize gmsh
         gmsh.initialize()
         gmsh.option.setNumber('Mesh.MeshSizeFromCurvature', 32)  # number of meshes per 2*pi radian
         gmsh.option.setNumber('Mesh.MinimumCircleNodes', 32)  # number of nodes per circle
@@ -156,6 +175,8 @@ class GDMLLoader:
         if mesh_type in ('union', 'subtraction', 'intersection'):
             a = self.get_mesh(elem.find('first').get('ref'))
             b = self.get_mesh(elem.find('second').get('ref'))
+            assert (not isinstance(a, Mesh)) and (not isinstance(b, Mesh)), \
+                "Tessellated objects cannot be used for boolean operations!"
             fpos, frot = self.get_pos_rot(elem, refs=('firstposition', 'firstrotation'))
             pos, rot = self.get_pos_rot(elem)
             posrot_entries = (fpos, frot, pos, rot)
@@ -178,7 +199,7 @@ class GDMLLoader:
             'sphere': helper.sphere,
             'torus': helper.torus,
             'tube': helper.tube,
-            'tessellated': lambda elem: helper.tessellated(elem, self.vertex_positions),  # pass vertex cache to helper
+            'tessellated': lambda el: helper.tessellated(el, self.vertex_positions),  # pass vertex cache to helper
             'torusstack': helper.torusstack,
             'opticalsurface': helper.ignore,
         }
@@ -235,16 +256,8 @@ class GDMLLoader:
                 mesh = deepcopy(self.mesh_cache[v.solid_ref])
             else:
                 gmsh.clear()
-                obj = self.get_mesh(v.solid_ref)
-                gmsh.model.occ.synchronize()
-                gmsh.model.mesh.generate(2)
-                for _ in range(self.refinement_order):
-                    gmsh.model.mesh.refine()
-                verts, faces = retrieve_mesh_from_gmsh()
-                if len(faces) == 0:
-                    mesh = None
-                else:
-                    mesh = Mesh(verts, faces)
+                tag_or_mesh = self.get_mesh(v.solid_ref)
+                mesh = retrieve_mesh(tag_or_mesh, refinement_order=self.refinement_order)
                 self.mesh_cache[v.solid_ref] = deepcopy(mesh)
             if mesh is None:
                 continue
