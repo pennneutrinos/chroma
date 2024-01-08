@@ -3,12 +3,11 @@ import xml.etree.ElementTree as et
 import numpy as np
 from collections import deque
 
-from chroma.gdml import gen_mesh
+from chroma.rat import gen_mesh
 from chroma.geometry import Mesh
 from chroma.log import logger
 from copy import deepcopy
 
-## Utility functions to connect the loader to gen_mesh
 _units = {'cm': 10, 'mm': 1, 'm': 1000, 'deg': np.pi / 180, 'rad': 1}
 
 
@@ -27,8 +26,8 @@ def get_vals(elem, value_attr=['x', 'y', 'z'], default_vals=None, unit_attr='uni
 def get_val(elem, attr, default=None):
     '''
     Calls eval on the value of the attribute attr if it exists and return 
-    it. Otherwise return the default specified. If there is no default 
-    specifed, raise an exception.
+    it. Otherwise, return the default specified. If there is no default
+    specified, raise an exception.
     '''
     txt = elem.get(attr, default=None)
     assert txt is not None or default is not None, 'Missing attribute: ' + attr

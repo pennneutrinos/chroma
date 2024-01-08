@@ -1,5 +1,7 @@
 import gmsh
 
+from chroma.geometry import Mesh
+
 occ = gmsh.model.occ
 
 import numpy as np
@@ -314,3 +316,32 @@ def gdml_eltube(dx, dy, dz):
     tube_tags_3d = getTagsByDim(occ.extrude([(2, base)], 0, 0, 2*dz), 3)
     assert len(tube_tags_3d) == 1, f'Generate {len(tube_tags_3d)} solids instead of 1.'
     return tube_tags_3d[0]
+
+
+def retrieve_mesh(tag_or_mesh, refinement_order: int = 0) -> Mesh:
+    '''
+    Processes solid into a chroma Mesh.
+    tag_or_mesh is either a gmsh tag that relates to the root solid, or a chroma.Mesh object.
+    If tag_or_mesh is a gmsh tag, apply downstream gmsh mesh generation routine and package the generated mesh into a
+    chorma.Mesh object. If tag_or_mesh is already a mesh, do nothing. Simply return the mesh.
+    Returns a chroma_mesh or None.
+    '''
+    if isinstance(tag_or_mesh, Mesh):
+        return tag_or_mesh
+    gmsh.model.occ.synchronize()
+    gmsh.model.mesh.generate(2)
+    for _ in range(refinement_order):
+        gmsh.model.mesh.refine()
+    face_tags, node_tags = gmsh.model.mesh.getElementsByType(2)
+    # three node_tags correspond to one face_tag
+    faces = np.asarray(node_tags)
+    faces -= 1  # because tags are 1-indexed
+    faces = np.reshape(faces, (-1, 3))
+    node_tags, coords, _ = gmsh.model.mesh.getNodes()
+    coords = np.reshape(coords, (-1, 3))
+    # return coords, faces
+    if len(faces) == 0:
+        mesh = None
+    else:
+        mesh = Mesh(coords, faces)
+    return mesh

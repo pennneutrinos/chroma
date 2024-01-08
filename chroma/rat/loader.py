@@ -8,42 +8,9 @@ from chroma.geometry import Mesh, Solid
 from chroma.log import logger
 from copy import deepcopy
 
-# Using the PyMesh library instead of Chroma's internal meshes to support boolean
-# operations like subtractions or unions. Perhaps Chroma's meshes should be
-# replaced _entirely_ by PyMesh...
-from chroma.gdml import loader_helper as helper
-from chroma.gdml import gen_mesh
+from . import gdml
+from . import gen_mesh
 import gmsh
-
-
-def retrieve_mesh(tag_or_mesh, refinement_order: int = 0) -> Mesh:
-    '''
-    Processes solid into a chroma Mesh.
-    tag_or_mesh is either a gmsh tag that relates to the root solid, or a chroma.Mesh object.
-    If tag_or_mesh is a gmsh tag, apply downstream gmsh mesh generation routine and package the generated mesh into a
-    chorma.Mesh object. If tag_or_mesh is already a mesh, do nothing. Simply return the mesh.
-    Returns a chroma_mesh or None.
-    '''
-    if isinstance(tag_or_mesh, Mesh):
-        return tag_or_mesh
-    gmsh.model.occ.synchronize()
-    gmsh.model.mesh.generate(2)
-    for _ in range(refinement_order):
-        gmsh.model.mesh.refine()
-    face_tags, node_tags = gmsh.model.mesh.getElementsByType(2)
-    # three node_tags correspond to one face_tag
-    faces = np.asarray(node_tags)
-    faces -= 1  # because tags are 1-indexed
-    faces = np.reshape(faces, (-1, 3))
-    node_tags, coords, _ = gmsh.model.mesh.getNodes()
-    coords = np.reshape(coords, (-1, 3))
-    # return coords, faces
-    if len(faces) == 0:
-        mesh = None
-    else:
-        mesh = Mesh(coords, faces)
-    return mesh
-
 
 # To convert length and angle units to cm and radians
 units = {'cm': 1, 'mm': 0.1, 'm': 100, 'deg': np.pi / 180, 'rad': 1}
@@ -55,9 +22,9 @@ class Volume:
     children. Keeps track of position and rotation of the GDML solid.
     '''
 
-    def __init__(self, name, gdml):
+    def __init__(self, name, loader):
         self.name = name
-        elem = gdml.vol_map[name]
+        elem = loader.vol_map[name]
         self.material_ref = elem.find('materialref').get('ref')
         self.solid_ref = elem.find('solidref').get('ref')
         placements = elem.findall('physvol')
@@ -65,8 +32,8 @@ class Volume:
         self.child_pos = []
         self.child_rot = []
         for placement in placements:
-            vol = Volume(placement.find('volumeref').get('ref'), gdml)
-            pos, rot = gdml.get_pos_rot(placement)
+            vol = Volume(placement.find('volumeref').get('ref'), loader)
+            pos, rot = loader.get_pos_rot(placement)
             self.children.append(vol)
             self.child_pos.append(pos)
             self.child_rot.append(rot)
@@ -96,7 +63,7 @@ def _default_volume_classifier(volume_ref, material_ref, parent_material_ref):
         return 'solid', dict(material1=vacuum, material2=vacuum, color=0xEEA0A0A0, surface=None)
 
 
-class GDMLLoader:
+class RATGeoLoader:
     '''
     This class supports loading a geometry from a GDML file by directly parsing 
     the XML. A subset of GDML is supported here, and exceptions will be raised
@@ -109,26 +76,25 @@ class GDMLLoader:
         '''
         # GDML mesh refinement order. This massively increases the number of triangles. Be careful!
         self.refinement_order = refinement_order
-
         self.gdml_file = gdml_file
         xml = et.parse(gdml_file)
-        gdml = xml.getroot()
+        gdml_tree = xml.getroot()
 
-        define = gdml.find('define')
+        define = gdml_tree.find('define')
         self.pos_map = {pos.get('name'): pos for pos in define.findall('position')}
         self.rot_map = {rot.get('name'): rot for rot in define.findall('rotation')}
 
-        solids = gdml.find('solids')
+        solids = gdml_tree.find('solids')
         self.solid_map = {solid.get('name'): solid for solid in solids}
 
-        structure = gdml.find('structure')
+        structure = gdml_tree.find('structure')
         volumes = structure.findall('volume')
         self.vol_map = {v.get('name'): v for v in volumes}
 
-        world_ref = gdml.find('setup').find('world').get('ref')
+        world_ref = gdml_tree.find('setup').find('world').get('ref')
         self.world = Volume(world_ref, self)
         self.mesh_cache = {}
-        self.vertex_positions = {vertex.get('name'): helper.get_vals(vertex) for vertex in define.findall('position')}
+        self.vertex_positions = {vertex.get('name'): gdml.get_vals(vertex) for vertex in define.findall('position')}
 
         # Initialize gmsh
         gmsh.initialize()
@@ -159,9 +125,9 @@ class GDMLLoader:
                 rot = self.rot_map[rot.get('ref')]
         return pos, rot
 
-    def get_mesh(self, solid_ref):
+    def build_mesh(self, solid_ref):
         '''
-        Build a PyMesh mesh for the solid identified by solid_ref if the named
+        Build a mesh for the solid identified by solid_ref if the named
         solid has not been built. If it has been built, a cached mesh is returned.
         If the tag of the solid is not yet implemented, or it uses features not
         yet implemented, this will raise an exception.
@@ -173,8 +139,8 @@ class GDMLLoader:
         elem = self.solid_map[solid_ref]
         mesh_type = elem.tag
         if mesh_type in ('union', 'subtraction', 'intersection'):
-            a = self.get_mesh(elem.find('first').get('ref'))
-            b = self.get_mesh(elem.find('second').get('ref'))
+            a = self.build_mesh(elem.find('first').get('ref'))
+            b = self.build_mesh(elem.find('second').get('ref'))
             assert (not isinstance(a, Mesh)) and (not isinstance(b, Mesh)), \
                 "Tessellated objects cannot be used for boolean operations!"
             fpos, frot = self.get_pos_rot(elem, refs=('firstposition', 'firstrotation'))
@@ -183,32 +149,32 @@ class GDMLLoader:
             posrot_vals = [None] * 4
             for i, entry in enumerate(posrot_entries):
                 if entry is not None:
-                    posrot_vals[i] = helper.get_vals(entry)
-            noUnion = self.noUnionClassifier(solid_ref)
+                    posrot_vals[i] = gdml.get_vals(entry)
+            no_union = self.noUnionClassifier(solid_ref)
             logger.info(f"Performing {mesh_type} for {solid_ref}")
             mesh = gen_mesh.gdml_boolean(a, b, mesh_type, firstpos=posrot_vals[0], firstrot=posrot_vals[1],
-                                         pos=posrot_vals[2], rot=posrot_vals[3], noUnion=noUnion)
+                                         pos=posrot_vals[2], rot=posrot_vals[3], noUnion=no_union)
             return mesh
         dispatcher = {
-            'box': helper.box,
-            'eltube': helper.eltube,
-            'ellipsoid': helper.ellipsoid,
-            'orb': helper.orb,
-            'polycone': helper.polycone,
-            'polyhedra': helper.polyhedra,
-            'sphere': helper.sphere,
-            'torus': helper.torus,
-            'tube': helper.tube,
-            'tessellated': lambda el: helper.tessellated(el, self.vertex_positions),  # pass vertex cache to helper
-            'torusstack': helper.torusstack,
-            'opticalsurface': helper.ignore,
+            'box': gdml.box,
+            'eltube': gdml.eltube,
+            'ellipsoid': gdml.ellipsoid,
+            'orb': gdml.orb,
+            'polycone': gdml.polycone,
+            'polyhedra': gdml.polyhedra,
+            'sphere': gdml.sphere,
+            'torus': gdml.torus,
+            'tube': gdml.tube,
+            'tessellated': lambda el: gdml.tessellated(el, self.vertex_positions),  # pass vertex cache to helper
+            'torusstack': gdml.torusstack,
+            'opticalsurface': gdml.ignore,
         }
-        generator = dispatcher.get(mesh_type, helper.notImplemented)
+        generator = dispatcher.get(mesh_type, gdml.notImplemented)
         mesh = generator(elem)
         return mesh
 
-    def build_detector(self, detector=None, volume_classifier=_default_volume_classifier, solidsToIgnore=None,
-                       noUnion=None):
+    def build_detector(self, detector=None, volume_classifier=_default_volume_classifier, solids_to_ignore=None,
+                       no_union=None):
         '''
         Add the meshes defined by this GDML to the detector. If detector is not
         specified, a new detector will be created.
@@ -224,23 +190,23 @@ class GDMLLoader:
         '''
         if detector is None:
             detector = Detector(vacuum)
-        if solidsToIgnore is None:  # by default ignore nothing
+        if solids_to_ignore is None:  # by default ignore nothing
             self.solidsToIgnore = lambda _: False
         else:
-            self.solidsToIgnore = solidsToIgnore
+            self.solidsToIgnore = solids_to_ignore
 
-        if noUnion is None:
+        if no_union is None:
             self.noUnionClassifier = lambda _: False
         else:
-            self.noUnionClassifier = noUnion
+            self.noUnionClassifier = no_union
         q = deque()
         q.append([self.world, np.zeros(3), np.identity(3), None])
         while len(q):
             v, pos, rot, parent_material_ref = q.pop()
             logger.debug(f"Generating volume {v.name}\tsolid ref: {v.solid_ref}")
             for child, c_pos, c_rot in zip(v.children, v.child_pos, v.child_rot):
-                c_pos = helper.get_vals(c_pos) if c_pos is not None else np.zeros(3)
-                c_rot = helper.get_vals(c_rot) if c_rot is not None else np.identity(3)
+                c_pos = gdml.get_vals(c_pos) if c_pos is not None else np.zeros(3)
+                c_rot = gdml.get_vals(c_rot) if c_rot is not None else np.identity(3)
                 c_pos = (rot @ c_pos) + pos
                 x_rot = make_rotation_matrix(c_rot[0], [1, 0, 0])
                 y_rot = make_rotation_matrix(c_rot[1], [0, 1, 0])
@@ -256,8 +222,8 @@ class GDMLLoader:
                 mesh = deepcopy(self.mesh_cache[v.solid_ref])
             else:
                 gmsh.clear()
-                tag_or_mesh = self.get_mesh(v.solid_ref)
-                mesh = retrieve_mesh(tag_or_mesh, refinement_order=self.refinement_order)
+                tag_or_mesh = self.build_mesh(v.solid_ref)
+                mesh = gen_mesh.retrieve_mesh(tag_or_mesh, refinement_order=self.refinement_order)
                 self.mesh_cache[v.solid_ref] = deepcopy(mesh)
             if mesh is None:
                 continue
