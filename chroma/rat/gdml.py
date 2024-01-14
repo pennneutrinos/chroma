@@ -8,7 +8,7 @@ from chroma.geometry import Mesh
 from chroma.log import logger
 from copy import deepcopy
 
-_units = {'cm': 10, 'mm': 1, 'm': 1000, 'deg': np.pi / 180, 'rad': 1}
+units = {'cm': 10, 'mm': 1, 'm': 1000, 'deg': np.pi / 180, 'rad': 1}
 
 
 def get_vals(elem, value_attr=['x', 'y', 'z'], default_vals=None, unit_attr='unit'):
@@ -19,7 +19,7 @@ def get_vals(elem, value_attr=['x', 'y', 'z'], default_vals=None, unit_attr='uni
     if default_vals is None:
         default_vals = [None] * len(value_attr)  # no default value by default
     assert len(value_attr) == len(default_vals), 'length of attributs does not equal to number of default values'
-    scale = _units[elem.get(unit_attr)] if unit_attr is not None else 1.0
+    scale = units[elem.get(unit_attr)] if unit_attr is not None else 1.0
     return [get_val(elem, attr, default) * scale for (attr, default) in zip(value_attr, default_vals)]
 
 
@@ -36,7 +36,7 @@ def get_val(elem, attr, default=None):
 
 def get_daughters_as_dict(elem, tag='zplane', unit_attr='lunit', add_rmin=True):
     '''Return the children elements with the `tag` as an attribute dictionary '''
-    scale = _units[elem.get(unit_attr)] if unit_attr is not None else 1.0
+    scale = units[elem.get(unit_attr)] if unit_attr is not None else 1.0
     planes = elem.findall(tag)
     result = deepcopy([plane.attrib for plane in planes])
     for r in result:
@@ -109,9 +109,9 @@ def torus(elem):
 
 def tube(elem):
     rmin, rmax, z = get_vals(elem, ['rmin', 'rmax', 'z'], default_vals=[0.0, None, 0.0], unit_attr='lunit')
-    if z < 1e-2:
-        logger.warn(f"Very thin tube is found, with thickness of {z} mm. Skipping!")
-        return
+    # if z < 1e-2:
+    #     logger.warn(f"Very thin tube is found, with thickness of {z} mm. Skipping!")
+    #     return
     startphi, deltaphi = get_vals(elem, ['startphi', 'deltaphi'], default_vals=[0.0, None], unit_attr='aunit')
     return gen_mesh.gdml_tube(rmin, rmax, z, startphi, deltaphi)
 

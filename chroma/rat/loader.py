@@ -13,41 +13,9 @@ from . import gen_mesh
 import gmsh
 
 # To convert length and angle units to cm and radians
-units = {'cm': 1, 'mm': 0.1, 'm': 100, 'deg': np.pi / 180, 'rad': 1}
+units = gdml.units
 
 
-class Volume:
-    '''
-    Represents a GDML volume and the volumes placed inside it (physvol) as 
-    children. Keeps track of position and rotation of the GDML solid.
-    '''
-
-    def __init__(self, name, loader):
-        self.name = name
-        elem = loader.vol_map[name]
-        self.material_ref = elem.find('materialref').get('ref')
-        self.solid_ref = elem.find('solidref').get('ref')
-        placements = elem.findall('physvol')
-        self.children = []
-        self.child_pos = []
-        self.child_rot = []
-        for placement in placements:
-            vol = Volume(placement.find('volumeref').get('ref'), loader)
-            pos, rot = loader.get_pos_rot(placement)
-            self.children.append(vol)
-            self.child_pos.append(pos)
-            self.child_rot.append(rot)
-
-    def show_hierarchy(self, indent=''):
-        print(indent + str(self), self.solid, self.material_ref)
-        for child in self.children:
-            child.show_hierarchy(indent=indent + ' ')
-
-    def __str__(self):
-        return self.name
-
-    def __repr__(self):
-        return str(self)
 
 
 from chroma.demo.optics import vacuum
@@ -70,11 +38,45 @@ class RATGeoLoader:
     if the GDML uses unsupported features.
     '''
 
+    class Volume:
+        '''
+        Represents a GDML volume and the volumes placed inside it (physvol) as
+        children. Keeps track of position and rotation of the GDML solid.
+        '''
+
+        def __init__(self, name, loader):
+            self.name = name
+            elem = loader.vol_map[name]
+            self.material_ref = elem.find('materialref').get('ref')
+            self.solid_ref = elem.find('solidref').get('ref')
+            placements = elem.findall('physvol')
+            self.children = []
+            self.child_pos = []
+            self.child_rot = []
+            for placement in placements:
+                vol = RATGeoLoader.Volume(placement.find('volumeref').get('ref'), loader)
+                pos, rot = loader.get_pos_rot(placement)
+                self.children.append(vol)
+                self.child_pos.append(pos)
+                self.child_rot.append(rot)
+
+        def show_hierarchy(self, indent=''):
+            print(indent + str(self), self.solid, self.material_ref)
+            for child in self.children:
+                child.show_hierarchy(indent=indent + ' ')
+
+        def __str__(self):
+            return self.name
+
+        def __repr__(self):
+            return str(self)
+
     def __init__(self, gdml_file, refinement_order=0):
         ''' 
         Read a geometry from the specified GDML file.
         '''
         # GDML mesh refinement order. This massively increases the number of triangles. Be careful!
+        self.volume_to_tag_map = {}
         self.refinement_order = refinement_order
         self.gdml_file = gdml_file
         xml = et.parse(gdml_file)
@@ -92,16 +94,18 @@ class RATGeoLoader:
         self.vol_map = {v.get('name'): v for v in volumes}
 
         world_ref = gdml_tree.find('setup').find('world').get('ref')
-        self.world = Volume(world_ref, self)
-        self.mesh_cache = {}
+        self.world = self.Volume(world_ref, self)
+        # self.mesh_cache = {}
         self.vertex_positions = {vertex.get('name'): gdml.get_vals(vertex) for vertex in define.findall('position')}
 
         # Initialize gmsh
         gmsh.initialize()
         gmsh.option.setNumber('Mesh.MeshSizeFromCurvature', 32)  # number of meshes per 2*pi radian
         gmsh.option.setNumber('Mesh.MinimumCircleNodes', 32)  # number of nodes per circle
-        gmsh.option.setNumber('General.Verbosity', 2)
+        # gmsh.option.setNumber('General.Verbosity', 2)
+        gmsh.option.setNumber('General.NumThreads', 0)
         gmsh.option.setNumber('Geometry.ToleranceBoolean', 0.001)
+        # gmsh.option.setNumber('Geometry.Tolerance', 0.001)
         gmsh.model.add(self.gdml_file)
 
     def get_pos_rot(self, elem, refs=('position', 'rotation')):
@@ -201,10 +205,11 @@ class RATGeoLoader:
             self.noUnionClassifier = no_union
         q = deque()
         q.append([self.world, np.zeros(3), np.identity(3), None])
+        gmsh.clear()
         while len(q):
-            v, pos, rot, parent_material_ref = q.pop()
-            logger.debug(f"Generating volume {v.name}\tsolid ref: {v.solid_ref}")
-            for child, c_pos, c_rot in zip(v.children, v.child_pos, v.child_rot):
+            volume, pos, rot, parent_material_ref = q.pop()
+            logger.debug(f"Generating volume {volume.name}\tsolid ref: {volume.solid_ref}")
+            for child, c_pos, c_rot in zip(volume.children, volume.child_pos, volume.child_rot):
                 c_pos = gdml.get_vals(c_pos) if c_pos is not None else np.zeros(3)
                 c_rot = gdml.get_vals(c_rot) if c_rot is not None else np.identity(3)
                 c_pos = (rot @ c_pos) + pos
@@ -212,28 +217,32 @@ class RATGeoLoader:
                 y_rot = make_rotation_matrix(c_rot[1], [0, 1, 0])
                 z_rot = make_rotation_matrix(c_rot[2], [0, 0, 1])
                 c_rot = (rot @ x_rot @ y_rot @ z_rot)
-                q.append([child, c_pos, c_rot, v.material_ref])
-            classification, kwargs = volume_classifier(v.name, v.material_ref, parent_material_ref)
+                q.append([child, c_pos, c_rot, volume.material_ref])
+            classification, kwargs = volume_classifier(volume.name, volume.material_ref, parent_material_ref)
             if classification == 'omit':
-                logger.debug(f"Volume {v.name} is omitted.")
+                logger.debug(f"Volume {volume.name} is omitted.")
                 continue
-            if v.solid_ref in self.mesh_cache:
-                logger.info(f"Using cache of solid {v.solid_ref} for volume {v.name}")
-                mesh = deepcopy(self.mesh_cache[v.solid_ref])
-            else:
-                gmsh.clear()
-                tag_or_mesh = self.build_mesh(v.solid_ref)
-                mesh = gen_mesh.retrieve_mesh(tag_or_mesh, refinement_order=self.refinement_order)
-                self.mesh_cache[v.solid_ref] = deepcopy(mesh)
-            if mesh is None:
+
+            tag_or_mesh = self.build_mesh(volume.solid_ref)
+
+            if tag_or_mesh is None or isinstance(tag_or_mesh, Mesh):
+                # ignore for now FIXME
                 continue
-            if classification == 'pmt':
-                channel_type = kwargs.pop('channel_type', None)
-                solid = Solid(mesh, **kwargs)
-                detector.add_pmt(solid, displacement=pos, rotation=rot, channel_type=channel_type)
-            elif classification == 'solid':
-                solid = Solid(mesh, **kwargs)
-                detector.add_solid(solid, displacement=pos, rotation=rot)
-            else:
-                raise Exception('Unknown volume classification: ' + classification)
+            self.volume_to_tag_map[volume.name] = tag_or_mesh
+            gen_mesh.gdml_transform(tag_or_mesh, pos, rot)
+            # mesh = gen_mesh.retrieve_mesh(tag_or_mesh, refinement_order=self.refinement_order)
+            # FIXME: assign material
+            # if classification == 'pmt':
+            #     channel_type = kwargs.pop('channel_type', None)
+            #     solid = Solid(mesh, **kwargs)
+            #     detector.add_pmt(solid, displacement=pos, rotation=rot, channel_type=channel_type)
+            # elif classification == 'solid':
+            #     solid = Solid(mesh, **kwargs)
+            #     detector.add_solid(solid, displacement=pos, rotation=rot)
+            # else:
+            #     raise Exception('Unknown volume classification: ' + classification)
+        gen_mesh.retrieve_mesh(0)
         return detector
+
+    def visualize(self):
+        gmsh.fltk.run()

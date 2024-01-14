@@ -1,6 +1,7 @@
 import gmsh
 
 from chroma.geometry import Mesh
+from chroma import transform
 
 occ = gmsh.model.occ
 
@@ -24,15 +25,28 @@ def getDimTags(dim, tags):
         result.append((dim, tag))
     return result
 
+
 def gdml_transform(obj, pos=None, rot=None):
-    if pos == None: 
+    if pos is None:
         pos = [0., 0., 0.]
-    if rot == None:
+    if rot is None:
         rot = [0., 0., 0.]
-    for axis_idx, angle in enumerate(rot):
-        axis = np.zeros(3)
-        axis[axis_idx]=1
-        occ.rotate(getDimTags(3, obj), 0., 0., 0., axis[0], axis[1], axis[2], angle)
+    if np.ndim(rot) == 1:
+        assert len(rot) == 3, "rotation defined in not 3 dimensions. Too much string theory?"
+        for axis_idx, angle in enumerate(rot):
+            # make the xyz axis
+            axis = np.zeros(3)
+            axis[axis_idx] = 1
+            occ.rotate(getDimTags(3, obj), 0., 0., 0., axis[0], axis[1], axis[2], angle)
+
+    else: # a rotation matrix is specified:
+        assert np.shape(rot) == (3, 3), f"rotation has shape {np.shape(rot)}. Too much string theory?"
+        assert len(pos) == 3, f"translation has shape {np.shape(pos)}. Too much string theory?"
+        # define the first 12 entries of a 4x4 transformation matrix.
+        # https://www.brainvoyager.com/bv/doc/UsersGuide/CoordsAndTransforms/SpatialTransformationMatrices.html
+        rot_axis, rot_angle = transform.matrix_to_rotvec(rot)
+        if rot_angle != 0:
+            occ.rotate(getDimTags(3, obj), 0, 0, 0, *rot_axis, rot_angle)
     occ.translate(getDimTags(3, obj), pos[0], pos[1], pos[2])
     return obj
 
@@ -328,7 +342,11 @@ def retrieve_mesh(tag_or_mesh, refinement_order: int = 0) -> Mesh:
     '''
     if isinstance(tag_or_mesh, Mesh):
         return tag_or_mesh
-    gmsh.model.occ.synchronize()
+    all_objects = occ.getEntities(3)
+    outDimTags, outDimTagsMap = occ.fragment(all_objects, all_objects)
+    print(outDimTags)
+    print(outDimTagsMap)
+    occ.synchronize()
     gmsh.model.mesh.generate(2)
     for _ in range(refinement_order):
         gmsh.model.mesh.refine()
