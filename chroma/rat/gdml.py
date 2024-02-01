@@ -123,7 +123,14 @@ def torusstack(elem):
     z_edges = [entry['z'] for entry in edges]
     z_origins = [entry['z'] for entry in origins]
     rho_origins = [entry['rho'] for entry in origins]
-    return gen_mesh.gdml_torusStack(rho_edges, z_edges, rho_origins, z_origins)
+    outer_solid = gen_mesh.gdml_torusStack(rho_edges, z_edges, rho_origins, z_origins)
+    inner_elem = elem.find('inner')
+    if inner_elem is None:
+        return outer_solid
+    else:
+        inner_solid = torusstack(inner_elem.find('torusstack'))
+        return gen_mesh.gdml_boolean(outer_solid, inner_solid, 'subtraction')
+
 
 
 def notImplemented(elem):

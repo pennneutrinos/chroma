@@ -2,7 +2,6 @@ import gmsh
 
 from chroma.geometry import Mesh
 from chroma import transform
-
 occ = gmsh.model.occ
 
 import numpy as np
@@ -60,7 +59,8 @@ def gdml_boolean(a, b, op, pos=None, rot=None, firstpos=None, firstrot=None, del
             return a
     if op == 'subtraction':
         assert a is not None, "Subtraction requires first object to be not None"
-        if b is None: return a #Subtracting nothing is a no-op
+        if b is None:
+            return a #Subtracting nothing is a no-op
     if op == 'intersection':
         assert a is not None and b is not None, "Intersection requires both objects to be not None"
     a = gdml_transform(a, pos=firstpos, rot=firstrot)
@@ -73,7 +73,11 @@ def gdml_boolean(a, b, op, pos=None, rot=None, firstpos=None, firstrot=None, del
         else:
             result = occ.fuse(getDimTags(3, a), getDimTags(3, b), removeObject=deleteA, removeTool=deleteB)
     elif op in ('intersection'):
-        result = occ.intersect(getDimTags(3, a), getDimTags(3, b), removeObject=deleteA, removeTool=deleteB)
+        occ.synchronize()
+        result = occ.intersect(objectDimTags=getDimTags(3, a),
+                               toolDimTags=getDimTags(3, b),
+                               removeObject=deleteA, removeTool=deleteA)
+        occ.synchronize()
     else:
         raise NotImplementedError(f'{op} is not implemented.')
     outDimTags, _ = result
@@ -248,11 +252,12 @@ def gdml_sphere(rmin, rmax, startphi, deltaphi, starttheta, deltatheta):
 def gdml_ellipsoid(ax, by, cz, zcut1, zcut2):
     base_ellipsoid = occ.addSphere(0, 0, 0, ax)
     squish_b, squish_c = by / ax, cz / ax
-    ellipsoid = occ.dilate(getDimTags(3, base_ellipsoid), 0, 0, 0, 1, squish_b, squish_c)
+    occ.dilate(getDimTags(3, base_ellipsoid), 0, 0, 0, 1, squish_b, squish_c)
     kill_box = occ.addBox( -ax, -by, zcut1, 2*ax, 2*by, (zcut2-zcut1) )
-    ellipsoid_tags = gdml_boolean(base_ellipsoid, kill_box, 'intersection')
-    return ellipsoid_tags 
-
+    # Do the intersection and then delete. GMSH throws weird errors otherwise. Bug?
+    ellipsoid_tags = gdml_boolean(base_ellipsoid, kill_box, 'intersection', deleteA=False, deleteB=False)
+    occ.remove(getDimTags(3, [kill_box, base_ellipsoid]), recursive=True)
+    return ellipsoid_tags
 
 def gdml_torus(rmin, rmax, rtor, startphi, deltaphi):
     pa = occ.addPoint(rmin, 0, 0)
@@ -332,34 +337,33 @@ def gdml_eltube(dx, dy, dz):
     return tube_tags_3d[0]
 
 
-def retrieve_mesh(tag_or_mesh, refinement_order: int = 0) -> Mesh:
-    '''
-    Processes solid into a chroma Mesh.
-    tag_or_mesh is either a gmsh tag that relates to the root solid, or a chroma.Mesh object.
-    If tag_or_mesh is a gmsh tag, apply downstream gmsh mesh generation routine and package the generated mesh into a
-    chorma.Mesh object. If tag_or_mesh is already a mesh, do nothing. Simply return the mesh.
-    Returns a chroma_mesh or None.
-    '''
-    if isinstance(tag_or_mesh, Mesh):
-        return tag_or_mesh
-    all_objects = occ.getEntities(3)
-    outDimTags, outDimTagsMap = occ.fragment(all_objects, all_objects)
-    print(outDimTags)
-    print(outDimTagsMap)
-    occ.synchronize()
-    gmsh.model.mesh.generate(2)
-    for _ in range(refinement_order):
-        gmsh.model.mesh.refine()
-    face_tags, node_tags = gmsh.model.mesh.getElementsByType(2)
-    # three node_tags correspond to one face_tag
-    faces = np.asarray(node_tags)
-    faces -= 1  # because tags are 1-indexed
-    faces = np.reshape(faces, (-1, 3))
-    node_tags, coords, _ = gmsh.model.mesh.getNodes()
-    coords = np.reshape(coords, (-1, 3))
-    # return coords, faces
-    if len(faces) == 0:
-        mesh = None
-    else:
-        mesh = Mesh(coords, faces)
-    return mesh
+def conform_model(root_volume):
+    """
+    Apply gmsh.model.occ.fragment on sibling volumes, therefore allow the volumes to share surfaces, making the mesh
+    "conformal".
+    Args:
+        root_volume: tag of the root volume in the model.
+    """
+    logger.info(f"Conforming children of {root_volume.placementName}")
+    if not root_volume.in_gmsh_model:
+        return
+    child_tags = []
+    for child in root_volume.children:
+        if child.in_gmsh_model:
+            child_tags.append(child.gmsh_tag)
+    logger.debug(f"There are {len(child_tags)} children")
+    if len(child_tags) > 1:
+        child_dimTags = getDimTags(3, child_tags)
+        occ.synchronize()
+        result_dimTags, result_mapping = occ.fragment(child_dimTags, child_dimTags)
+        result_tags = getTagsByDim(result_dimTags, 3)
+        if set(child_tags) != set(result_tags):
+            logger.warn(f"Children of {root_volume.placementName} potentially overlaps.")
+            for i, mapping in enumerate(result_mapping[:len(child_dimTags)]):
+                if len(mapping) > 1:
+                    for child in root_volume.children:
+                        if child.gmsh_tag == child_dimTags[i][1]:
+                            logger.warn(f"{child_dimTags[i]}:{child.placementName} -> {mapping}")
+    logger.debug(f"Conforming children of {root_volume.placementName} complete!")
+    for child in root_volume.children:
+        conform_model(child)
