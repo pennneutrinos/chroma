@@ -23,8 +23,9 @@ units = gdml.units
 
 from chroma.demo.optics import vacuum
 
-DEFAULT_SOLID_COLOR=0xEEA0A0A0
-DEFAULT_PMT_COLOLR=0xA0A05000
+DEFAULT_SOLID_COLOR = 0xEEA0A0A0
+DEFAULT_PMT_COLOLR = 0xA0A05000
+
 
 def _default_volume_classifier(volume_ref, material_ref, parent_material_ref):
     '''This is an example volume classifier, primarily for visualization'''
@@ -44,14 +45,16 @@ class Volume:
     children. Keeps track of position and rotation of the GDML solid.
     '''
 
-    def __init__(self, name: str, loader: "RATGeoLoader", phys_vol_name: str = '/BUILDROOT'):
+    def __init__(self, name: str, loader: "RATGeoLoader", phys_vol_name: str = '/BUILDROOT', parent_material_ref = None):
         self.placementName = phys_vol_name
         self.name = name
         elem = loader.vol_xml_map[name]
         self.material_ref = elem.find('materialref').get('ref')
+        self.parent_material_ref = parent_material_ref
         self.solid_ref = elem.find('solidref').get('ref')
         self.in_gmsh_model = False
         self.gmsh_tag = -1
+        self.mesh = None
 
         placements = elem.findall('physvol')
         self.children = []
@@ -59,7 +62,7 @@ class Volume:
         self.child_rot = []
         for placement in placements:
             vol = Volume(placement.find('volumeref').get('ref'), loader,
-                         self.placementName + '/' + placement.get('name'))
+                         self.placementName + '/' + placement.get('name'), parent_material_ref=self.material_ref)
             pos, rot = loader.get_pos_rot(placement)
             self.children.append(vol)
             self.child_pos.append(pos)
@@ -260,30 +263,21 @@ class RATGeoLoader:
 
             tag_or_mesh = self.build_mesh(volume.solid_ref)
 
-            if tag_or_mesh is None or isinstance(tag_or_mesh, Mesh):
-                # ignore for now FIXME
+            if tag_or_mesh is None:
                 continue
-            # self.placement_to_volume_map[volume.placementName] = tag_or_mesh
-            gen_mesh.gdml_transform(tag_or_mesh, pos, rot)
-            volume.in_gmsh_model = True
-            volume.gmsh_tag = tag_or_mesh
+            elif isinstance(tag_or_mesh, Mesh):
+                volume.mesh = tag_or_mesh
+                volume.mesh.vertices = np.inner(volume.mesh.vertices, rot) + pos
+            else:
+                gen_mesh.gdml_transform(tag_or_mesh, pos, rot)
+                volume.in_gmsh_model = True
+                volume.gmsh_tag = tag_or_mesh
 
-            # mesh = gen_mesh.retrieve_mesh(tag_or_mesh, refinement_order=self.refinement_order)
             # FIXME: assign material
-            # if classification == 'pmt':
-            #     channel_type = kwargs.pop('channel_type', None)
-            #     solid = Solid(mesh, **kwargs)
-            #     detector.add_pmt(solid, displacement=pos, rotation=rot, channel_type=channel_type)
-            # elif classification == 'solid':
-            #     solid = Solid(mesh, **kwargs)
-            #     detector.add_solid(solid, displacement=pos, rotation=rot)
-            # else:
-            #     raise Exception('Unknown volume classification: ' + classification)
         gen_mesh.conform_model(self.world)
-        # detector = self.retrieve_mesh()
+        detector = self.retrieve_mesh()
 
         return detector
-
 
     def retrieve_mesh(self):
         '''
@@ -295,8 +289,8 @@ class RATGeoLoader:
         '''
         occ = gmsh.model.occ
         mesh = gmsh.model.mesh
-        # occ.synchronize()
-        # mesh.generate(2)
+        occ.synchronize()
+        mesh.generate(2)
         for _ in range(self.refinement_order):
             mesh.refine()
         node_tags, coords, _ = mesh.getNodes()
@@ -304,6 +298,7 @@ class RATGeoLoader:
         coords = np.reshape(coords, (-1, 3))
 
         nFaces = 0
+        nVtxs = len(coords)
 
         inside_materials = []
         outside_materials = []
@@ -324,17 +319,54 @@ class RATGeoLoader:
             node_idx_per_face.extend(node_idx_per_face_for_surf)
             nFaces += len(face_tags_for_surf)
         node_idx_per_face = np.reshape(node_idx_per_face, (-1, 3))
-        detector = chroma.detector.Detector(detector_material=chroma.geometry.Material("water"))  # TODO: figure out what to do with this. This is only used for G4. Remove?
-        print(coords.shape)
-        print(node_idx_per_face.shape)
+        detector = chroma.detector.Detector(detector_material=chroma.geometry.Material(
+            "water"))  # TODO: figure out what to do with this. This is only used for G4. Remove?
+        logger.info(f"GMSH Model Exported. {nFaces} Triangles, {nVtxs} vertices")
         detector.mesh = Mesh(coords, node_idx_per_face, remove_duplicate_vertices=False, remove_null_triangles=False)
         detector.colors = np.ones(nFaces) * DEFAULT_SOLID_COLOR
         detector.solid_id = np.ones(nFaces, dtype=int)
         detector.unique_materials = self.materials_used
         detector.inner_material_index = np.asarray(inside_materials)
         detector.outer_material_index = np.asarray(outside_materials)
-        detector.unique_surfaces = [None] #TODO
+        detector.unique_surfaces = [None]  # TODO
         detector.surface_index = np.zeros(nFaces, dtype=int)
+
+        # add tessellated solids. Put all of them in lists fist and concat them at the end because numpy concat is slow
+        concat_meshes = [detector.mesh]
+        concat_colors = [detector.colors]
+        concat_solid_id = [detector.solid_id]
+        concat_inner_material_index = [detector.inner_material_index]
+        concat_outer_material_index = [detector.outer_material_index]
+        concat_surface_index = [detector.surface_index]
+        for volume in self.placement_to_volume_map.values():
+            logger.info(f"Adding tessellated solid {volume.name} to the geometry")
+            if volume.mesh is not None:
+                concat_meshes.append(volume.mesh)
+                concat_colors.append(np.ones(len(volume.mesh.triangles)) * DEFAULT_PMT_COLOLR)
+                concat_solid_id.append(np.ones(len(volume.mesh.triangles), dtype=int))
+                inner_material = self.material_lookup[volume.material_ref]
+                outer_material = self.material_lookup[volume.parent_material_ref]
+                concat_inner_material_index.append(np.ones(len(volume.mesh.triangles), dtype=int) * inner_material)
+                concat_outer_material_index.append(np.ones(len(volume.mesh.triangles), dtype=int) * outer_material)
+                concat_surface_index.append(np.zeros(len(volume.mesh.triangles), dtype=int))
+                nFaces += len(volume.mesh.triangles)
+                nVtxs += len(volume.mesh.vertices)
+                # logger.info(f"Added {len(volume.mesh.triangles)} triangles and {len(volume.mesh.vertices)} vertices")
+
+                # TODO: add surface
+        logger.info(f"Total after adding Tess Objects: {nFaces} triangles and {nVtxs} vertices")
+        n_vertex_cumulative = np.cumsum([len(mesh.vertices) for mesh in concat_meshes])
+        n_vertex_cumulative = np.concatenate([[0], n_vertex_cumulative[:-1]])
+        detector.mesh = Mesh(
+            np.concatenate([mesh.vertices for mesh in concat_meshes]),
+            np.concatenate([mesh.triangles + n_vertex_cumulative[i] for i, mesh in enumerate(concat_meshes)]),
+            remove_duplicate_vertices=False, remove_null_triangles=False
+        )
+        detector.colors = np.concatenate(concat_colors)
+        detector.solid_id = np.concatenate(concat_solid_id)
+        detector.inner_material_index = np.concatenate(concat_inner_material_index)
+        detector.outer_material_index = np.concatenate(concat_outer_material_index)
+        detector.surface_index = np.concatenate(concat_surface_index)
         # TODO: add channels
         return detector
         #return node_idx_per_face, coords, inside_materials, outside_materials
