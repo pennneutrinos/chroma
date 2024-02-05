@@ -8,7 +8,7 @@ from chroma.geometry import Mesh
 from chroma.log import logger
 from copy import deepcopy
 
-units = {'cm': 10, 'mm': 1, 'm': 1000, 'deg': np.pi / 180, 'rad': 1}
+units = {'cm': 10, 'mm': 1, 'm': 1000, 'deg': np.pi / 180, 'rad': 1, 'g/cm3': 1}
 
 
 def get_vals(elem, value_attr=['x', 'y', 'z'], default_vals=None, unit_attr='unit'):
@@ -33,6 +33,14 @@ def get_val(elem, attr, default=None):
     assert txt is not None or default is not None, 'Missing attribute: ' + attr
     return eval(txt, {}, {}) if txt is not None else default
 
+def get_matrix(elem):
+    '''
+    Return the correctly shaped matrix from the text of the element, as a numpy array.
+    '''
+    assert elem.tag == 'matrix', 'Element is not a matrix'
+    coldim = int(elem.get('coldim'))
+    values = np.asarray(elem.get('values').split(), dtype=float)
+    return values.reshape(-1, coldim)
 
 def get_daughters_as_dict(elem, tag='zplane', unit_attr='lunit', add_rmin=True):
     '''Return the children elements with the `tag` as an attribute dictionary '''

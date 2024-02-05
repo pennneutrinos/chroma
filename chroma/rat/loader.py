@@ -9,17 +9,18 @@ from chroma.detector import Detector
 from chroma.transform import make_rotation_matrix
 from chroma.geometry import Mesh, Solid
 from chroma.log import logger
-from copy import deepcopy
 
 from chroma.rat import gdml
 from chroma.rat import gen_mesh
+from .ratdb_parser import RatDBParser
 import gmsh
 from pathlib import Path
+from scipy import constants
+
 # To convert length and angle units to cm and radians
+
 units = gdml.units
-
-
-
+TwoPiHbarC = constants.value('reduced Planck constant times c in MeV fm') * 1e-6 * 2 * np.pi  # MeV * nm
 
 from chroma.demo.optics import vacuum
 
@@ -97,12 +98,15 @@ class RATGeoLoader:
     if the GDML uses unsupported features.
     '''
 
-    def __init__(self, gdml_file, refinement_order=0, override_worldref=None):
+    def __init__(self, gdml_file, refinement_order=0, ratdb_file=None, override_worldref=None):
         ''' 
         Read a geometry from the specified GDML file.
         '''
-        # GDML mesh refinement order. This massively increases the number of triangles. Be careful!
+        self.ratdb_parser = None
+        if ratdb_file is not None:
+            self.add_ratdb(ratdb_file)
 
+        # GDML mesh refinement order. This massively increases the number of triangles. Be careful!
         self.refinement_order = refinement_order
         self.gdml_file = gdml_file
         xml = et.parse(gdml_file)
@@ -111,13 +115,16 @@ class RATGeoLoader:
         define = gdml_tree.find('define')
         self.pos_map = {pos.get('name'): pos for pos in define.findall('position')}
         self.rot_map = {rot.get('name'): rot for rot in define.findall('rotation')}
+        self.matrix_map = {matrix.get('name'): matrix for matrix in define.findall('matrix')}
 
         self.materials_used = []
         self.material_lookup = {}
         materials = gdml_tree.find('materials')
-        for material_idx, material in enumerate(materials):
-            self.materials_used.append(vacuum)
-            self.material_lookup[material.get('name')] = material_idx
+        for material_idx, material_xml in enumerate(materials):
+            if material_xml.tag != 'material':
+                continue
+            self.materials_used.append(self.create_material(material_xml))
+            self.material_lookup[material_xml.get('name')] = material_idx
         # todo: add Material properties
         solids = gdml_tree.find('solids')
         self.solid_xml_map = {solid.get('name'): solid for solid in solids}
@@ -145,6 +152,9 @@ class RATGeoLoader:
 
         # gmsh.option.setNumber('Geometry.Tolerance', 0.001)
         gmsh.model.add(self.gdml_file)
+
+    def add_ratdb(self, ratdb_file):
+        self.ratdb_parser = RatDBParser(ratdb_file)
 
     def get_pos_rot(self, elem, refs=('position', 'rotation')):
         ''' 
@@ -369,8 +379,7 @@ class RATGeoLoader:
         detector.surface_index = np.concatenate(concat_surface_index)
         # TODO: add channels
         return detector
-        #return node_idx_per_face, coords, inside_materials, outside_materials
-
+        # return node_idx_per_face, coords, inside_materials, outside_materials
 
     def assign_material_to_surfaces(self):
         surface_tags = [dimTag[1] for dimTag in gmsh.model.getEntities(2)]
@@ -410,4 +419,36 @@ class RATGeoLoader:
     def visualize(self):
         gmsh.fltk.run()
 
+    def create_material(self, material_xml) -> chroma.geometry.Material:
+        name = material_xml.get('name')
+        material = chroma.geometry.Material(name)
+        name_nouid = name.split('0x')[0]
+        density = gdml.get_val(material_xml.find('D'), attr='value')
+        density *= units.get(material_xml.find('D').get('unit'), 1.0)
+        material.density = density
+        material.set('refractive_index', 1.0)
+        material.set('absorption_length', 1e6)
+        material.set('scattering_length', 1e6)
+        for comp in material_xml.findall('fraction'):
+            element = comp.get('ref').split('0x')[0]
+            fraction = gdml.get_val(comp, attr='n')
+            material.composition[element] = fraction
 
+        for optical_prop in material_xml.findall('property'):
+            data_ref = optical_prop.get('ref')
+            data = gdml.get_matrix(self.matrix_map[data_ref])
+            # check for zeros in the first column
+            property_name = optical_prop.get('name')
+            if property_name == 'RINDEX':
+                material.refractive_index = _convert_to_wavelength(data)
+            if property_name == 'ABSLENGTH':
+                material.absorption_length = _convert_to_wavelength(data)
+            if property_name == 'RSLENGTH':
+                material.scattering_length = _convert_to_wavelength(data)
+        return material
+    # TODO: scintillation properties
+    # TODO: surfaces?
+
+def _convert_to_wavelength(arr):
+    arr[:, 0] = TwoPiHbarC / arr[:, 0]
+    return arr[::-1]
