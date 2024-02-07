@@ -39,8 +39,13 @@ def get_matrix(elem):
     '''
     assert elem.tag == 'matrix', 'Element is not a matrix'
     coldim = int(elem.get('coldim'))
-    values = np.asarray(elem.get('values').split(), dtype=float)
+    values = get_vector(elem)
     return values.reshape(-1, coldim)
+
+
+def get_vector(elem, attr='values', dtype=float):
+    return np.asarray(elem.get(attr).split(), dtype=dtype)
+
 
 def get_daughters_as_dict(elem, tag='zplane', unit_attr='lunit', add_rmin=True):
     '''Return the children elements with the `tag` as an attribute dictionary '''

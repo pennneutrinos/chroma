@@ -46,7 +46,7 @@ class Volume:
     children. Keeps track of position and rotation of the GDML solid.
     '''
 
-    def __init__(self, name: str, loader: "RATGeoLoader", phys_vol_name: str = '/BUILDROOT', parent_material_ref = None):
+    def __init__(self, name: str, loader: "RATGeoLoader", phys_vol_name: str = '/BUILDROOT', parent_material_ref=None):
         self.placementName = phys_vol_name
         self.name = name
         elem = loader.vol_xml_map[name]
@@ -56,6 +56,7 @@ class Volume:
         self.in_gmsh_model = False
         self.gmsh_tag = -1
         self.mesh = None
+        self.skin_surface = None
 
         placements = elem.findall('physvol')
         self.children = []
@@ -125,20 +126,35 @@ class RATGeoLoader:
                 continue
             self.materials_used.append(self.create_material(material_xml))
             self.material_lookup[material_xml.get('name')] = material_idx
-        # todo: add Material properties
         solids = gdml_tree.find('solids')
         self.solid_xml_map = {solid.get('name'): solid for solid in solids}
-
+        surfaces = solids.findall('opticalsurface')
+        self.surfaces_used = [None]
+        self.surface_lookup = {None: 0}
+        for surface_idx, surface_xml in enumerate(surfaces, start=1):  # 0 is reserved for no surface
+            self.surfaces_used.append(self.create_surface(surface_xml))
+            self.surface_lookup[surface_xml.get('name')] = surface_idx
         structure = gdml_tree.find('structure')
         volumes = structure.findall('volume')
         self.vol_xml_map = {v.get('name'): v for v in volumes}
-
         world_ref = gdml_tree.find('setup').find('world').get('ref')
         if override_worldref is not None:
             world_ref = override_worldref
         self.world = Volume(world_ref, self)
         self.placement_to_volume_map = self.world.flat_view()
-        # self.mesh_cache = {}
+        skin_surfaces_xml = structure.findall('skinsurface')
+        skin_surfaces_map = {skin.find('volumeref').get('ref'): skin.get('surfaceproperty') for skin in skin_surfaces_xml}
+        for volume in self.placement_to_volume_map.values():
+            if volume.name in skin_surfaces_map:
+                volume.skin_surface = skin_surfaces_map[volume.name]
+        border_surfaces_xml = structure.findall('bordersurface')
+        self.border_surfaces = []
+        for border_surface in border_surfaces_xml:
+            surface_ref = border_surface.get('surfaceproperty')
+            placement_names = [physvolref.get('ref') for physvolref in border_surface.findall('physvolref')]
+            self.border_surfaces.append({'surface': surface_ref,
+                                         'placement_names': placement_names})
+        self.fix_orphaned_border_surfaces()
         self.vertex_positions = {vertex.get('name'): gdml.get_vals(vertex) for vertex in define.findall('position')}
 
         # Initialize gmsh
@@ -283,7 +299,6 @@ class RATGeoLoader:
                 volume.in_gmsh_model = True
                 volume.gmsh_tag = tag_or_mesh
 
-            # FIXME: assign material
         gen_mesh.conform_model(self.world)
         detector = self.retrieve_mesh()
 
@@ -312,18 +327,20 @@ class RATGeoLoader:
 
         inside_materials = []
         outside_materials = []
+        surfaces = []
         node_idx_per_face = []
         surface_tags_to_materialrefs = self.assign_material_to_surfaces()
-        for surf_tag, (mref_in, mref_out) in surface_tags_to_materialrefs.items():
+        for surf_tag, (mref_in, mref_out, surface_ref) in surface_tags_to_materialrefs.items():
             logger.info(f"Processing surface {surf_tag} with materials {mref_in} and {mref_out}")
             face_tags_for_surf, node_tag_per_face_for_surf = mesh.getElementsByType(self.triangle_typeid, surf_tag)
             # face_tags_for_surf -= 1  # because tags are 1-indexed
             # node_tag_per_face_for_surf = np.reshape(node_tags_for_surf, (-1, 3))
             surf_material_idx_in = self.material_lookup[mref_in]
             surf_material_idx_out = self.material_lookup[mref_out]
-
+            surf_surface_idx = self.surface_lookup[surface_ref]
             inside_materials.extend([surf_material_idx_in] * len(face_tags_for_surf))
             outside_materials.extend([surf_material_idx_out] * len(face_tags_for_surf))
+            surfaces.extend([surf_surface_idx] * len(face_tags_for_surf))
             # fancy numpy magic for assigning node indices to faces
             node_idx_per_face_for_surf = np.vectorize(node_tag_to_index.get)(node_tag_per_face_for_surf)
             node_idx_per_face.extend(node_idx_per_face_for_surf)
@@ -338,8 +355,8 @@ class RATGeoLoader:
         detector.unique_materials = self.materials_used
         detector.inner_material_index = np.asarray(inside_materials)
         detector.outer_material_index = np.asarray(outside_materials)
-        detector.unique_surfaces = [None]  # TODO
-        detector.surface_index = np.zeros(nFaces, dtype=int)
+        detector.unique_surfaces = self.surfaces_used
+        detector.surface_index = np.asarray(surfaces)
 
         # add tessellated solids. Put all of them in lists fist and concat them at the end because numpy concat is slow
         concat_meshes = [detector.mesh]
@@ -356,14 +373,13 @@ class RATGeoLoader:
                 concat_solid_id.append(np.ones(len(volume.mesh.triangles), dtype=int))
                 inner_material = self.material_lookup[volume.material_ref]
                 outer_material = self.material_lookup[volume.parent_material_ref]
+                skin_surface = self.surface_lookup[volume.skin_surface]
                 concat_inner_material_index.append(np.ones(len(volume.mesh.triangles), dtype=int) * inner_material)
                 concat_outer_material_index.append(np.ones(len(volume.mesh.triangles), dtype=int) * outer_material)
-                concat_surface_index.append(np.zeros(len(volume.mesh.triangles), dtype=int))
+                concat_surface_index.append(np.ones(len(volume.mesh.triangles), dtype=int) * skin_surface)
                 nFaces += len(volume.mesh.triangles)
                 nVtxs += len(volume.mesh.vertices)
                 # logger.info(f"Added {len(volume.mesh.triangles)} triangles and {len(volume.mesh.vertices)} vertices")
-
-                # TODO: add surface
         logger.info(f"Total after adding Tess Objects: {nFaces} triangles and {nVtxs} vertices")
         n_vertex_cumulative = np.cumsum([len(mesh.vertices) for mesh in concat_meshes])
         n_vertex_cumulative = np.concatenate([[0], n_vertex_cumulative[:-1]])
@@ -408,11 +424,20 @@ class RATGeoLoader:
         surface_tags_to_materialrefs = {}
         for surf_tag, placementNames in surface_tags_to_placementNames.items():
             mrefs = []
+            surface = None
             for pname in placementNames:
                 if pname == '/':
                     mrefs.append(self.world.material_ref)
                 else:
                     mrefs.append(self.placement_to_volume_map[pname].material_ref)
+                    if self.placement_to_volume_map[pname].skin_surface is not None:
+                        assert surface is None, f"Surface is assigned twice for {pname}"
+                        surface = self.placement_to_volume_map[pname].skin_surface
+            physvol_names = [Path(pname).name for pname in placementNames]
+            for border_surface in self.border_surfaces:
+                if set(border_surface['placement_names']) == set(physvol_names):
+                    surface = border_surface['surface']
+            mrefs.append(surface)
             surface_tags_to_materialrefs[surf_tag] = mrefs
         return surface_tags_to_materialrefs
 
@@ -437,7 +462,6 @@ class RATGeoLoader:
         for optical_prop in material_xml.findall('property'):
             data_ref = optical_prop.get('ref')
             data = gdml.get_matrix(self.matrix_map[data_ref])
-            # check for zeros in the first column
             property_name = optical_prop.get('name')
             if property_name == 'RINDEX':
                 material.refractive_index = _convert_to_wavelength(data)
@@ -446,8 +470,93 @@ class RATGeoLoader:
             if property_name == 'RSLENGTH':
                 material.scattering_length = _convert_to_wavelength(data)
         return material
+
     # TODO: scintillation properties
-    # TODO: surfaces?
+
+    def create_surface(self, surface_xml) -> chroma.geometry.Surface:
+        name = surface_xml.get('name')
+        surface = chroma.geometry.Surface(name)
+        model = gdml.get_val(surface_xml, attr='model')
+        surface_type = gdml.get_val(surface_xml, attr='type')
+        finish = gdml.get_val(surface_xml, attr='finish')
+        value = gdml.get_val(surface_xml, attr='value')
+        assert model == 0 or model == 1 or model == 4, "Only glisur, unified, and dichroic models are supported"
+        assert surface_type == 0 or surface_type == 4, "Only dielectric_metal and dichroic surfaces are supported"
+        assert finish == 0 or finish == 1 or finish == 3, \
+            "Only polished, ground, and polishedfrontpainted are supported"
+        specular_component = value if model == 0 else 1 - value  # this is a hack, because chroma does not support the
+        # same time of diffusive reflection
+        if finish == 1:
+            surface.transmissive = False
+        abslength = None
+        for optical_prop in surface_xml.findall('property'):
+            data_ref = optical_prop.get('ref')
+            property_name = optical_prop.get('name')
+            data = gdml.get_matrix(self.matrix_map[data_ref])
+            if property_name == 'REFLECTIVITY':
+                reflectivity = _convert_to_wavelength(data)
+                reflectivity_specular = reflectivity
+                reflectivity_specular[:, 1] *= specular_component
+                reflectivity_diffuse = reflectivity
+                reflectivity_diffuse[:, 1] *= (1 - specular_component)
+                surface.reflect_specular = _convert_to_wavelength(reflectivity_specular)
+                surface.reflect_diffuse = _convert_to_wavelength(reflectivity_diffuse)
+            if property_name == 'THICKNESS':
+                thicknesses = data[:, 1]
+                if not np.allclose(thicknesses, thicknesses[0]):
+                    logger.warning(f"Surface {name} has non-uniform thicknesses. Average will be taken")
+                surface.thickness = np.mean(thicknesses)
+            if property_name == 'RINDEX':
+                surface.eta = _convert_to_wavelength(data)
+            if property_name == 'KINDEX':
+                surface.k = _convert_to_wavelength(data)
+                surface.model = 1  # if k index is specified, we have a complex surface model
+            if property_name == 'EFFICIENCY':
+                surface.detect = _convert_to_wavelength(data)
+            if property_name == "ABSLENGTH":
+                abslength = _convert_to_wavelength(data)
+        if abslength is not None:
+            surface.absorb = abslength
+            surface.absorb[:, 1] = 1 - np.exp(-surface.thickness / surface.absorb[:, 1])
+        if model == 4 and surface_type == 4:
+            assert surface_xml.find('dichroic_data') is not None, "Dichroic surfaces must have dichroic_data"
+            surface.model = 3  # CUDA dichroic model
+            dichroic_data = surface_xml.find('dichroic_data')
+            x_length = gdml.get_val(dichroic_data, attr='x_length')
+            y_length = gdml.get_val(dichroic_data, attr='y_length')
+            x_val_elem = dichroic_data.find('x')
+            wvls = gdml.get_vector(x_val_elem)
+            y_val_elem = dichroic_data.find('y')
+            angles = gdml.get_vector(y_val_elem)
+            data_elem = dichroic_data.find('data')
+            transmission_data = gdml.get_vector(data_elem).reshape(x_length, y_length)
+            reflection_data = 1 - transmission_data
+            angles = np.deg2rad(angles)
+            transmits = [np.asarray([wvls, transmission_data[:, i]]).T for i in range(y_length)]
+            reflects = [np.asarray([wvls, reflection_data[:, i]]).T for i in range(y_length)]
+            surface.dichroic_props = chroma.geometry.DichroicProps(angles, transmits, reflects)
+        return surface
+
+    def fix_orphaned_border_surfaces(self):
+        """
+            RAT-PAC2 currently have a bug where one of the physical volumes that a border surface is assigned to does
+            not exist. When this happens, the border was supposed to be assigned between the other physical volume and
+            its mother.
+        """
+        all_physvols = set(Path(placement).name for placement in self.placement_to_volume_map.keys())
+        for border_surface in self.border_surfaces:
+            for i, physvol_name in enumerate(border_surface['placement_names']):
+                if physvol_name not in all_physvols:
+                    logger.warning(f"Border surface {border_surface} has an orphaned physical volume {physvol_name}. "
+                                   f"Attempting to fix")
+                    other_physvol_name = border_surface['placement_names'][1 - i]
+                    for placement in self.placement_to_volume_map.keys():
+                        if other_physvol_name == Path(placement).name:
+                            border_surface['placement_names'][i] = Path(placement).parent.name
+                            logger.warning(f"Fixed border surface {border_surface} by changing {physvol_name} to {Path(placement).parent.name}")
+                            break
+                    break
+
 
 def _convert_to_wavelength(arr):
     arr[:, 0] = TwoPiHbarC / arr[:, 0]
