@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 from copy import deepcopy
+from typing import Callable, Optional
+
 from chroma.log import logger
 
 
@@ -85,7 +87,7 @@ class RatDBParser:
         merged = RatDBParser._merge_planes(merged, user_tables)
         self.entries = merged
 
-    def create_db(self):
+    def create_db(self) -> dict | None:
         db = {}
         for entry in self.entries:
             name = entry.get('name')
@@ -114,8 +116,16 @@ class RatDBParser:
             return {entry.get('index'): entry for entry in self.entries if entry.get('name') == table_name}
         result = self.db.get(table_name, None)
         if as_list:
-            return list(result.values()) if result else []
+            return list(result.values()) if result is not None else []
         return result
+
+    def get_matching_entries(self, table_name_match: Optional[Callable] = None,
+                             index_match: Optional[Callable] = None) -> list[dict]:
+        if table_name_match is None:
+            table_name_match = lambda x: True
+        if index_match is None:
+            index_match = lambda x: True
+        return [entry for entry in self.entries if table_name_match(entry['name']) and index_match(entry['index'])]
 
     def __str__(self):
         return f"""

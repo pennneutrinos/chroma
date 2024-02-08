@@ -25,7 +25,7 @@ TwoPiHbarC = constants.value('reduced Planck constant times c in MeV fm') * 1e-6
 from chroma.demo.optics import vacuum
 
 DEFAULT_SOLID_COLOR = 0xEEA0A0A0
-DEFAULT_PMT_COLOLR = 0xA0A05000
+DEFAULT_PMT_COLOR = 0xA0A05000
 
 
 def _default_volume_classifier(volume_ref, material_ref, parent_material_ref):
@@ -46,7 +46,11 @@ class Volume:
     children. Keeps track of position and rotation of the GDML solid.
     '''
 
-    def __init__(self, name: str, loader: "RATGeoLoader", phys_vol_name: str = '/BUILDROOT', parent_material_ref=None):
+    def __init__(self, name: str, loader: "RATGeoLoader",
+                 phys_vol_name: str = '/BUILDROOT',
+                 parent_material_ref: Optional[str] = None,
+                 absolute_pos: Optional[np.ndarray] = None,
+                 absolute_rot: Optional[np.ndarray] = None):
         self.placementName = phys_vol_name
         self.name = name
         elem = loader.vol_xml_map[name]
@@ -57,18 +61,31 @@ class Volume:
         self.gmsh_tag = -1
         self.mesh = None
         self.skin_surface = None
+        self.pmt_type = None
+        self.pmt_channel = None
+        self.absolute_pos = np.zeros(3) if absolute_pos is None else np.asarray(absolute_pos)
+        self.absolute_rot = np.identity(3) if absolute_rot is None else np.asarray(absolute_rot)
+        if absolute_pos is not None:
+            self.absolute_pos = absolute_pos
 
         placements = elem.findall('physvol')
         self.children = []
-        self.child_pos = []
-        self.child_rot = []
         for placement in placements:
+            c_pos, c_rot = loader.get_pos_rot(placement)
+            c_pos = gdml.get_vals(c_pos) if c_pos is not None else np.zeros(3)
+            c_rot = gdml.get_vals(c_rot) if c_rot is not None else np.identity(3)
+            c_pos = (self.absolute_rot @ c_pos) + self.absolute_pos
+            x_rot = make_rotation_matrix(c_rot[0], [1, 0, 0])
+            y_rot = make_rotation_matrix(c_rot[1], [0, 1, 0])
+            z_rot = make_rotation_matrix(c_rot[2], [0, 0, 1])
+            c_rot = (self.absolute_rot @ x_rot @ y_rot @ z_rot)
+
             vol = Volume(placement.find('volumeref').get('ref'), loader,
-                         self.placementName + '/' + placement.get('name'), parent_material_ref=self.material_ref)
-            pos, rot = loader.get_pos_rot(placement)
+                         self.placementName + '/' + placement.get('name'),
+                         parent_material_ref=self.material_ref,
+                         absolute_pos=c_pos, absolute_rot=c_rot)
+
             self.children.append(vol)
-            self.child_pos.append(pos)
-            self.child_rot.append(rot)
 
     def show_hierarchy(self, indent=''):
         print(indent + str(self), self.solid_ref, self.material_ref)
@@ -103,9 +120,14 @@ class RATGeoLoader:
         ''' 
         Read a geometry from the specified GDML file.
         '''
+        self.nPMTs = None
+        self.pmt_index_to_position = None
+        self.pmt_index_to_type = None
         self.ratdb_parser = None
         if ratdb_file is not None:
             self.add_ratdb(ratdb_file)
+        else:
+            logger.warn("No RATDB file is provided. No PMT Channel info will be loaded.")
 
         # GDML mesh refinement order. This massively increases the number of triangles. Be careful!
         self.refinement_order = refinement_order
@@ -113,6 +135,7 @@ class RATGeoLoader:
         xml = et.parse(gdml_file)
         gdml_tree = xml.getroot()
 
+        # definitions
         define = gdml_tree.find('define')
         self.pos_map = {pos.get('name'): pos for pos in define.findall('position')}
         self.rot_map = {rot.get('name'): rot for rot in define.findall('rotation')}
@@ -120,6 +143,8 @@ class RATGeoLoader:
 
         self.materials_used = []
         self.material_lookup = {}
+
+        # materials
         materials = gdml_tree.find('materials')
         for material_idx, material_xml in enumerate(materials):
             if material_xml.tag != 'material':
@@ -134,6 +159,8 @@ class RATGeoLoader:
         for surface_idx, surface_xml in enumerate(surfaces, start=1):  # 0 is reserved for no surface
             self.surfaces_used.append(self.create_surface(surface_xml))
             self.surface_lookup[surface_xml.get('name')] = surface_idx
+
+        # volumes
         structure = gdml_tree.find('structure')
         volumes = structure.findall('volume')
         self.vol_xml_map = {v.get('name'): v for v in volumes}
@@ -142,8 +169,11 @@ class RATGeoLoader:
             world_ref = override_worldref
         self.world = Volume(world_ref, self)
         self.placement_to_volume_map = self.world.flat_view()
+
+        # surfaces
         skin_surfaces_xml = structure.findall('skinsurface')
-        skin_surfaces_map = {skin.find('volumeref').get('ref'): skin.get('surfaceproperty') for skin in skin_surfaces_xml}
+        skin_surfaces_map = {skin.find('volumeref').get('ref'): skin.get('surfaceproperty') for skin in
+                             skin_surfaces_xml}
         for volume in self.placement_to_volume_map.values():
             if volume.name in skin_surfaces_map:
                 volume.skin_surface = skin_surfaces_map[volume.name]
@@ -156,6 +186,10 @@ class RATGeoLoader:
                                          'placement_names': placement_names})
         self.fix_orphaned_border_surfaces()
         self.vertex_positions = {vertex.get('name'): gdml.get_vals(vertex) for vertex in define.findall('position')}
+
+        # PMT info
+        if self.ratdb_parser is not None:
+            self.add_pmt_info()
 
         # Initialize gmsh
         gmsh.initialize()
@@ -268,20 +302,16 @@ class RATGeoLoader:
         else:
             self.noUnionClassifier = no_union
         q = deque()
-        q.append([self.world, np.zeros(3), np.identity(3), None])
+        q.append(self.world)
         gmsh.clear()
         while len(q):
-            volume, pos, rot, parent_material_ref = q.pop()
+            volume: Volume = q.pop()
+            pos = volume.absolute_pos
+            rot = volume.absolute_rot
+            parent_material_ref = volume.parent_material_ref
             logger.debug(f"Generating volume {volume.name}\tsolid ref: {volume.solid_ref}\tposition: {pos}")
-            for child, c_pos, c_rot in zip(volume.children, volume.child_pos, volume.child_rot):
-                c_pos = gdml.get_vals(c_pos) if c_pos is not None else np.zeros(3)
-                c_rot = gdml.get_vals(c_rot) if c_rot is not None else np.identity(3)
-                c_pos = (rot @ c_pos) + pos
-                x_rot = make_rotation_matrix(c_rot[0], [1, 0, 0])
-                y_rot = make_rotation_matrix(c_rot[1], [0, 1, 0])
-                z_rot = make_rotation_matrix(c_rot[2], [0, 0, 1])
-                c_rot = (rot @ x_rot @ y_rot @ z_rot)
-                q.append([child, c_pos, c_rot, volume.material_ref])
+            for child in volume.children:
+                q.append(child)
             classification, kwargs = volume_classifier(volume.name, volume.material_ref, parent_material_ref)
             if classification == 'omit':
                 logger.debug(f"Volume {volume.name} is omitted.")
@@ -329,8 +359,15 @@ class RATGeoLoader:
         outside_materials = []
         surfaces = []
         node_idx_per_face = []
-        surface_tags_to_materialrefs = self.assign_material_to_surfaces()
-        for surf_tag, (mref_in, mref_out, surface_ref) in surface_tags_to_materialrefs.items():
+        solid_ids = []  # id=0: not a PMT. id>0: PMT id + 1
+        colors = []
+        surface_tag_to_properties = self.assign_surface_properties()
+        for surf_tag, prop in surface_tag_to_properties.items():
+            mref_in, mref_out = prop['mrefs']
+            surface_ref = prop['surface']
+            pmt_channel = prop['pmt_channel']
+            solid_id = 0 if pmt_channel is None else pmt_channel + 1
+            color = DEFAULT_PMT_COLOR if pmt_channel is not None else DEFAULT_SOLID_COLOR
             logger.info(f"Processing surface {surf_tag} with materials {mref_in} and {mref_out}")
             face_tags_for_surf, node_tag_per_face_for_surf = mesh.getElementsByType(self.triangle_typeid, surf_tag)
             # face_tags_for_surf -= 1  # because tags are 1-indexed
@@ -341,22 +378,28 @@ class RATGeoLoader:
             inside_materials.extend([surf_material_idx_in] * len(face_tags_for_surf))
             outside_materials.extend([surf_material_idx_out] * len(face_tags_for_surf))
             surfaces.extend([surf_surface_idx] * len(face_tags_for_surf))
+            solid_ids.extend([solid_id] * len(face_tags_for_surf))
+            colors.extend([color] * len(face_tags_for_surf))
             # fancy numpy magic for assigning node indices to faces
             node_idx_per_face_for_surf = np.vectorize(node_tag_to_index.get)(node_tag_per_face_for_surf)
             node_idx_per_face.extend(node_idx_per_face_for_surf)
             nFaces += len(face_tags_for_surf)
         node_idx_per_face = np.reshape(node_idx_per_face, (-1, 3))
-        detector = chroma.detector.Detector(detector_material=chroma.geometry.Material(
+        detector = Detector(detector_material=chroma.geometry.Material(
             "water"))  # TODO: figure out what to do with this. This is only used for G4. Remove?
         logger.info(f"GMSH Model Exported. {nFaces} Triangles, {nVtxs} vertices")
         detector.mesh = Mesh(coords, node_idx_per_face, remove_duplicate_vertices=False, remove_null_triangles=False)
-        detector.colors = np.ones(nFaces) * DEFAULT_SOLID_COLOR
-        detector.solid_id = np.ones(nFaces, dtype=int)
+        detector.colors = np.asarray(colors)
+        detector.solid_id = np.asarray(solid_ids)
         detector.unique_materials = self.materials_used
         detector.inner_material_index = np.asarray(inside_materials)
         detector.outer_material_index = np.asarray(outside_materials)
         detector.unique_surfaces = self.surfaces_used
         detector.surface_index = np.asarray(surfaces)
+        detector.channel_index_to_channel_type = self.pmt_index_to_type
+        detector.channel_index_to_position = self.pmt_index_to_position
+        detector.solid_id_to_channel_index = np.arange(-1, self.nPMTs, dtype=int)
+        detector.channel_index_to_solid_id = np.arange(self.nPMTs, dtype=int) + 1
 
         # add tessellated solids. Put all of them in lists fist and concat them at the end because numpy concat is slow
         concat_meshes = [detector.mesh]
@@ -369,7 +412,7 @@ class RATGeoLoader:
             logger.info(f"Adding tessellated solid {volume.name} to the geometry")
             if volume.mesh is not None:
                 concat_meshes.append(volume.mesh)
-                concat_colors.append(np.ones(len(volume.mesh.triangles)) * DEFAULT_PMT_COLOLR)
+                concat_colors.append(np.ones(len(volume.mesh.triangles)) * DEFAULT_SOLID_COLOR)
                 concat_solid_id.append(np.ones(len(volume.mesh.triangles), dtype=int))
                 inner_material = self.material_lookup[volume.material_ref]
                 outer_material = self.material_lookup[volume.parent_material_ref]
@@ -397,7 +440,7 @@ class RATGeoLoader:
         return detector
         # return node_idx_per_face, coords, inside_materials, outside_materials
 
-    def assign_material_to_surfaces(self):
+    def assign_surface_properties(self):
         surface_tags = [dimTag[1] for dimTag in gmsh.model.getEntities(2)]
         surface_tags_to_placementNames = {tag: ['', ''] for tag in surface_tags}  # inside, outside
         # Assign material to surface based on the volumes they bound
@@ -423,22 +466,24 @@ class RATGeoLoader:
         # Assign material to surfaces now
         surface_tags_to_materialrefs = {}
         for surf_tag, placementNames in surface_tags_to_placementNames.items():
-            mrefs = []
-            surface = None
+            properties = {'mrefs': [], 'surface': None, 'pmt_channel': None}
             for pname in placementNames:
                 if pname == '/':
-                    mrefs.append(self.world.material_ref)
+                    properties['mrefs'].append(self.world.material_ref)
+                    continue
                 else:
-                    mrefs.append(self.placement_to_volume_map[pname].material_ref)
+                    properties['mrefs'].append(self.placement_to_volume_map[pname].material_ref)
                     if self.placement_to_volume_map[pname].skin_surface is not None:
-                        assert surface is None, f"Surface is assigned twice for {pname}"
-                        surface = self.placement_to_volume_map[pname].skin_surface
+                        assert properties['surface'] is None, f"Surface is assigned twice for {pname}"
+                        properties['surface'] = self.placement_to_volume_map[pname].skin_surface
+                if self.placement_to_volume_map[pname].pmt_type is not None:
+                    assert properties['pmt_channel'] is None, f"PMT channel is assigned twice for {pname}"
+                    properties['pmt_channel'] = self.placement_to_volume_map[pname].pmt_channel
             physvol_names = [Path(pname).name for pname in placementNames]
             for border_surface in self.border_surfaces:
                 if set(border_surface['placement_names']) == set(physvol_names):
-                    surface = border_surface['surface']
-            mrefs.append(surface)
-            surface_tags_to_materialrefs[surf_tag] = mrefs
+                    properties['surface'] = border_surface['surface']
+            surface_tags_to_materialrefs[surf_tag] = properties
         return surface_tags_to_materialrefs
 
     def visualize(self):
@@ -553,9 +598,43 @@ class RATGeoLoader:
                     for placement in self.placement_to_volume_map.keys():
                         if other_physvol_name == Path(placement).name:
                             border_surface['placement_names'][i] = Path(placement).parent.name
-                            logger.warning(f"Fixed border surface {border_surface} by changing {physvol_name} to {Path(placement).parent.name}")
+                            logger.warning(
+                                f"Fixed border surface {border_surface} by changing {physvol_name} to {Path(placement).parent.name}")
                             break
                     break
+
+    def add_pmt_info(self):
+        pmtinfo_tables = self.ratdb_parser.get_matching_entries(
+            table_name_match=lambda name: name.startswith('PMTINFO'),
+        )
+        pmt_array_names = [table['name'] for table in pmtinfo_tables]
+        pmt_volume_names = ['pmts_' + name[len('PMTINFO_'):].lower() + '_body_log'
+                            for name in pmt_array_names]
+        pmt_array_positions = [np.array([table['x'], table['y'], table['z']]).T
+                               for table in pmtinfo_tables]
+        # pmt_array_positions = np.concatenate(pmt_array_positions)
+        pmt_types = [table['type'] for table in pmtinfo_tables]
+        # pmt_types = np.concatenate(pmt_types)
+        self.nPMTs = 0
+        self.pmt_index_to_type = []
+        self.pmt_index_to_position = []
+        for placement, volume in self.placement_to_volume_map.items():
+            for pmt_array_idx, vol_name in enumerate(pmt_volume_names):
+                if volume.name.startswith(vol_name):
+                    pmt_idx_in_array = np.argwhere(
+                        np.all(np.isclose(volume.absolute_pos, pmt_array_positions[pmt_array_idx]), axis=1))
+                    assert pmt_idx_in_array.size == 1, \
+                        (f"PMT {volume.name} in PMT Array {vol_name} can't be found or is not unique. "
+                         f"Indices: {pmt_idx_in_array}")
+                    pmt_idx_in_array = pmt_idx_in_array.item()
+                    volume.pmt_type = pmt_types[pmt_array_idx][pmt_idx_in_array]
+                    volume.pmt_channel = self.nPMTs
+                    self.pmt_index_to_type.append(volume.pmt_type)
+                    self.pmt_index_to_position.append(volume.absolute_pos)
+                    self.nPMTs += 1
+                    logger.info(f"Assigned PMT Channel {volume.pmt_channel} to {placement}, Type {volume.pmt_type}")
+                    break
+        logger.info(f"Assigned {self.nPMTs} PMT Channels")
 
 
 def _convert_to_wavelength(arr):
