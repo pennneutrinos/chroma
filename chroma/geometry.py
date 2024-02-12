@@ -233,7 +233,7 @@ class Material(object):
         self.scintillation_mod = None
         self.comp_reemission_prob = []
         self.comp_reemission_wvl_cdf = []
-        self.comp_reemission_times = []
+        self.comp_reemission_times = []  # FIXME: Not used?
         self.comp_reemission_time_cdf = []
         self.comp_absorption_length = []
         self.density = 0.0 # g/cm^3

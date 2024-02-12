@@ -7,7 +7,7 @@ from collections import deque
 import chroma.geometry
 from chroma.detector import Detector
 from chroma.transform import make_rotation_matrix
-from chroma.geometry import Mesh, Solid
+from chroma.geometry import Mesh
 from chroma.log import logger
 
 from chroma.rat import gdml
@@ -146,11 +146,11 @@ class RATGeoLoader:
 
         # materials
         materials = gdml_tree.find('materials')
-        for material_idx, material_xml in enumerate(materials):
+        for material_xml in materials:
             if material_xml.tag != 'material':
                 continue
             self.materials_used.append(self.create_material(material_xml))
-            self.material_lookup[material_xml.get('name')] = material_idx
+            self.material_lookup[material_xml.get('name')] = len(self.materials_used) - 1
         solids = gdml_tree.find('solids')
         self.solid_xml_map = {solid.get('name'): solid for solid in solids}
         surfaces = solids.findall('opticalsurface')
@@ -436,7 +436,6 @@ class RATGeoLoader:
         detector.inner_material_index = np.concatenate(concat_inner_material_index)
         detector.outer_material_index = np.concatenate(concat_outer_material_index)
         detector.surface_index = np.concatenate(concat_surface_index)
-        # TODO: add channels
         return detector
         # return node_idx_per_face, coords, inside_materials, outside_materials
 
@@ -504,19 +503,75 @@ class RATGeoLoader:
             fraction = gdml.get_val(comp, attr='n')
             material.composition[element] = fraction
 
-        for optical_prop in material_xml.findall('property'):
+        # Material-wise properties
+        num_comp = 0
+        optical_props = material_xml.findall('property')
+        for optical_prop in optical_props:
             data_ref = optical_prop.get('ref')
             data = gdml.get_matrix(self.matrix_map[data_ref])
             property_name = optical_prop.get('name')
             if property_name == 'RINDEX':
                 material.refractive_index = _convert_to_wavelength(data)
-            if property_name == 'ABSLENGTH':
+            elif property_name == 'ABSLENGTH':
                 material.absorption_length = _convert_to_wavelength(data)
-            if property_name == 'RSLENGTH':
+            elif property_name == 'RSLENGTH':
                 material.scattering_length = _convert_to_wavelength(data)
-        return material
+            elif property_name == "SCINTILLATION":
+                material.scintillation_spectrum = _convert_to_wavelength(data)
+            elif property_name == "SCINT_RISE_TIME":
+                material.scintillation_rise_time = data.item()
+            elif property_name == "LIGHT_YIELD":
+                material.scintillation_light_yield = data.item()
+            elif property_name.startswith('SCINTWAVEFORM'):
+                if material.scintillation_waveform is None:
+                    material.scintillation_waveform = {}
+                # extract the property name from the SCINTWAVEFORM prefix
+                material.scintillation_waveform[property_name[len('SCINTWAVEFORM'):]] = data
+            elif property_name.startswith('SCINTMOD'):
+                if material.scintillation_mod is None:
+                    material.scintillation_mod = {}
+                # extract the property name from the SCINTMOD prefix
+                material.scintillation_mod[property_name[len('SCINTMOD'):]] = data
+            elif property_name == 'NUM_COMP':
+                num_comp = int(data.item())
 
-    # TODO: scintillation properties
+        # Component wise properties.
+        reemission_spectrum = None
+        # RAT does not support component-wise reemission spectra. All components share the
+        # same spectrum.
+        if num_comp > 0:
+            for prop_name in ['SCINTILLATION_WLS', 'SCINTILLATION']:
+                reemission_spectrum = self._find_property(prop_name, optical_props)
+                if reemission_spectrum is not None:
+                    reemission_spectrum = _convert_to_wavelength(reemission_spectrum)
+                    reemission_spectrum = _pdf_to_cdf(reemission_spectrum)
+                    break
+            assert reemission_spectrum is not None, f"No reemission spectrum found for material {name}"
+        for i_comp in range(num_comp):
+            reemission_prob = self._find_property('REEMISSION_PROB' + str(i_comp), optical_props)
+            if reemission_prob is not None:
+                reemission_prob = _convert_to_wavelength(reemission_prob)
+                material.comp_reemission_prob.append(reemission_prob)
+            else:
+                material.comp_reemission_prob.append(np.column_stack((
+                    chroma.geometry.standard_wavelengths,
+                    np.zeros(chroma.geometry.standard_wavelengths.size))))
+            material.comp_reemission_wvl_cdf.append(reemission_spectrum)
+
+            reemission_waveform = self._find_property('REEMITWAVEFORM' + str(i_comp), optical_props)
+            if reemission_waveform is not None:
+                if reemission_waveform.flatten()[0] < 0:
+                    reemission_waveform = _exp_decay_cdf(reemission_waveform) #FIXME: use scintillation rise time?
+                else:
+                    reemission_waveform = _pdf_to_cdf(reemission_waveform)
+            else:
+                reemission_waveform = np.column_stack(([0, 1], [0, 0]))  # dummy waveform
+            material.comp_reemission_time_cdf.append(reemission_waveform)
+
+            absorption_length = self._find_property('ABSLENGTH' + str(i_comp), optical_props)
+            assert absorption_length is not None, "No component-wise absorption length found for material"
+            material.comp_absorption_length.append(_convert_to_wavelength(absorption_length))
+        return material
 
     def create_surface(self, surface_xml) -> chroma.geometry.Surface:
         name = surface_xml.get('name')
@@ -636,7 +691,39 @@ class RATGeoLoader:
                     break
         logger.info(f"Assigned {self.nPMTs} PMT Channels")
 
+    def _find_property(self, name, properties):
+        for prop in properties:
+            if prop.get('name') == name:
+                data_ref = prop.get('ref')
+                data = gdml.get_matrix(self.matrix_map[data_ref])
+                return data
+        return None
 
 def _convert_to_wavelength(arr):
     arr[:, 0] = TwoPiHbarC / arr[:, 0]
     return arr[::-1]
+
+
+def _pdf_to_cdf(arr):
+    x, y = arr.T
+    yc = np.cumsum((y[1:] + y[:-1]) * (x[1:] - x[:-1]))
+    yc = np.concatenate([[0], yc])
+    if yc[-1] != 0:
+        yc /= yc[-1]
+    return np.column_stack([x, yc])
+
+
+def _exp_decay_cdf(arr, t_rise=0):
+    decays = np.exp(-arr[:, 0])
+    weights = np.exp(arr[:, 1])
+    max_time = 3.0 * np.max(decays)
+    min_time = np.min(decays)
+    bin_width = min_time / 100
+    times = np.arange(0, max_time + bin_width / 2, bin_width)
+    if t_rise == 0:
+        cdf = np.sum([a * (t * (1.0 - np.exp(-times / t))) / (t) for t, a in zip(decays, weights)], axis=0)
+    else:
+        cdf = np.sum(
+            [a * (t * (1.0 - np.exp(-times / t)) + t_rise * (np.exp(-times / t_rise) - 1)) / (t - t_rise) for t, a in
+             zip(decays, weights)], axis=0)
+    return np.column_stack([times, cdf])
