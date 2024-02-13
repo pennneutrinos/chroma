@@ -155,7 +155,7 @@ class RATGeoLoader:
         self.solid_xml_map = {solid.get('name'): solid for solid in solids}
         surfaces = solids.findall('opticalsurface')
         self.surfaces_used = [None]
-        self.surface_lookup = {None: 0}
+        self.surface_lookup = {None: -1}
         for surface_idx, surface_xml in enumerate(surfaces, start=1):  # 0 is reserved for no surface
             self.surfaces_used.append(self.create_surface(surface_xml))
             self.surface_lookup[surface_xml.get('name')] = surface_idx
