@@ -613,11 +613,11 @@ propagate_at_dichroic(Photon &p, State &s, curandState &rng, Surface *surface, b
     const DichroicProps *props = surface->dichroic_props;
     float idx = interp_idx(incident_angle,props->nangles,props->angles);
     unsigned int iidx = (int)idx;
-    
+    unsigned int iidx_hi = iidx < props->nangles - 2 ? iidx + 1 : iidx;
     float reflect_prob_low = interp_property(surface, p.wavelength, props->dichroic_reflect[iidx]);
-    float reflect_prob_high = interp_property(surface, p.wavelength, props->dichroic_reflect[iidx+1]);
+    float reflect_prob_high = interp_property(surface, p.wavelength, props->dichroic_reflect[iidx_hi]);
     float transmit_prob_low = interp_property(surface, p.wavelength, props->dichroic_transmit[iidx]);
-    float transmit_prob_high = interp_property(surface, p.wavelength, props->dichroic_transmit[iidx+1]);
+    float transmit_prob_high = interp_property(surface, p.wavelength, props->dichroic_transmit[iidx_hi]);
     
     float reflect_prob = reflect_prob_low + (reflect_prob_high-reflect_prob_low)*(idx-iidx);
     float transmit_prob = transmit_prob_low + (transmit_prob_high-transmit_prob_low)*(idx-iidx);
@@ -639,7 +639,7 @@ propagate_at_dichroic(Photon &p, State &s, curandState &rng, Surface *surface, b
 
 __device__ int
 propagate_at_surface(Photon &p, State &s, curandState &rng, Geometry *geometry,
-                     bool use_weights=false)
+                    bool use_weights=false)
 {
     Surface *surface = geometry->surfaces[s.surface_index];
 
