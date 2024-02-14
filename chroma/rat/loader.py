@@ -1,4 +1,5 @@
 import xml.etree.ElementTree as et
+from copy import deepcopy
 from typing import Optional
 
 import numpy as np
@@ -561,7 +562,7 @@ class RATGeoLoader:
             reemission_waveform = self._find_property('REEMITWAVEFORM' + str(i_comp), optical_props)
             if reemission_waveform is not None:
                 if reemission_waveform.flatten()[0] < 0:
-                    reemission_waveform = _exp_decay_cdf(reemission_waveform) #FIXME: use scintillation rise time?
+                    reemission_waveform = _exp_decay_cdf(reemission_waveform)  # FIXME: use scintillation rise time?
                 else:
                     reemission_waveform = _pdf_to_cdf(reemission_waveform)
             else:
@@ -644,19 +645,27 @@ class RATGeoLoader:
             its mother.
         """
         all_physvols = set(Path(placement).name for placement in self.placement_to_volume_map.keys())
-        for border_surface in self.border_surfaces:
+        border_surface_copy = deepcopy(self.border_surfaces)
+        self.border_surfaces = []
+        for border_surface in border_surface_copy:
+            needs_fixing = False
             for i, physvol_name in enumerate(border_surface['placement_names']):
                 if physvol_name not in all_physvols:
+                    needs_fixing = True
                     logger.warning(f"Border surface {border_surface} has an orphaned physical volume {physvol_name}. "
-                                   f"Attempting to fix")
+                                   f"Fixing by replacing the orphan with the mother volume.")
                     other_physvol_name = border_surface['placement_names'][1 - i]
                     for placement in self.placement_to_volume_map.keys():
-                        if other_physvol_name == Path(placement).name:
-                            border_surface['placement_names'][i] = Path(placement).parent.name
-                            logger.warning(
-                                f"Fixed border surface {border_surface} by changing {physvol_name} to {Path(placement).parent.name}")
-                            break
+                        if Path(placement).name == other_physvol_name:
+                            self.border_surfaces.append({
+                                'surface': border_surface['surface'],
+                                'placement_names': [Path(placement).parent.name, other_physvol_name]
+                            })
+                            logger.info(f"Fixed border surface {border_surface} by replacing "
+                                        f"{physvol_name} with {Path(placement).parent.name}")
                     break
+            if not needs_fixing:
+                self.border_surfaces.append(border_surface)
 
     def add_pmt_info(self):
         pmtinfo_tables = self.ratdb_parser.get_matching_entries(
@@ -698,6 +707,7 @@ class RATGeoLoader:
                 data = gdml.get_matrix(self.matrix_map[data_ref])
                 return data
         return None
+
 
 def _convert_to_wavelength(arr):
     arr[:, 0] = TwoPiHbarC / arr[:, 0]
