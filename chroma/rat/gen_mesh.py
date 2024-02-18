@@ -2,6 +2,7 @@ import gmsh
 
 from chroma.geometry import Mesh
 from chroma import transform
+
 occ = gmsh.model.occ
 
 import numpy as np
@@ -13,8 +14,10 @@ from chroma.log import logger
 def getTagsByDim(dimTags, dim):
     return [dimTag[1] for dimTag in dimTags if dimTag[0] == dim]
 
+
 def getDimTagsByDim(dimTags, dim):
     return [dimTag for dimTag in dimTags if dimTag[0] == dim]
+
 
 def getDimTags(dim, tags):
     if type(tags) == int:
@@ -38,7 +41,7 @@ def gdml_transform(obj, pos=None, rot=None):
             axis[axis_idx] = 1
             occ.rotate(getDimTags(3, obj), 0., 0., 0., axis[0], axis[1], axis[2], angle)
 
-    else: # a rotation matrix is specified:
+    else:  # a rotation matrix is specified:
         assert np.shape(rot) == (3, 3), f"rotation has shape {np.shape(rot)}. Too much string theory?"
         assert len(pos) == 3, f"translation has shape {np.shape(pos)}. Too much string theory?"
         # define the first 12 entries of a 4x4 transformation matrix.
@@ -60,7 +63,7 @@ def gdml_boolean(a, b, op, pos=None, rot=None, firstpos=None, firstrot=None, del
     if op == 'subtraction':
         assert a is not None, "Subtraction requires first object to be not None"
         if b is None:
-            return a #Subtracting nothing is a no-op
+            return a  # Subtracting nothing is a no-op
     if op == 'intersection':
         assert a is not None and b is not None, "Intersection requires both objects to be not None"
     a = gdml_transform(a, pos=firstpos, rot=firstrot)
@@ -86,6 +89,7 @@ def gdml_boolean(a, b, op, pos=None, rot=None, firstpos=None, firstrot=None, del
         logger.info("Note: more than one object created by boolean operation.")
         return [DimTag[1] for DimTag in outDimTags]
     return outDimTags[0][1]
+
 
 def gdml_box(dx, dy, dz):
     result = occ.addBox(-dx / 2, -dy / 2, -dz / 2, dx, dy, dz)
@@ -197,7 +201,6 @@ def solid_polyhedra(startphi, deltaphi, numsides, r_list, z_list):
     return result
 
 
-
 def gdml_polyhedra(startphi, deltaphi, numsides, zplane):
     # First vertex is on the positive X half-axis.
     # Specified radius is distance from center to the middle of the edge
@@ -237,6 +240,7 @@ def gdml_tube(rmin, rmax, z, startphi, deltaphi):
 def gdml_orb(r):
     return occ.addSphere(0, 0, 0, r)
 
+
 def gdml_sphere(rmin, rmax, startphi, deltaphi, starttheta, deltatheta):
     pa = occ.addPoint(0, 0, rmin)
     pb = occ.addPoint(0, 0, rmax)
@@ -249,21 +253,23 @@ def gdml_sphere(rmin, rmax, startphi, deltaphi, starttheta, deltatheta):
     assert len(sphere_tags_3d) == 1, f'Generated {len(sphere_tags_3d)} solids instead of 1.'
     return sphere_tags_3d[0]
 
+
 def gdml_ellipsoid(ax, by, cz, zcut1, zcut2):
     base_ellipsoid = occ.addSphere(0, 0, 0, ax)
     squish_b, squish_c = by / ax, cz / ax
     occ.dilate(getDimTags(3, base_ellipsoid), 0, 0, 0, 1, squish_b, squish_c)
-    kill_box = occ.addBox( -ax, -by, zcut1, 2*ax, 2*by, (zcut2-zcut1) )
+    kill_box = occ.addBox(-ax, -by, zcut1, 2 * ax, 2 * by, (zcut2 - zcut1))
     # Do the intersection and then delete. GMSH throws weird errors otherwise. Bug?
     ellipsoid_tags = gdml_boolean(base_ellipsoid, kill_box, 'intersection', deleteA=False, deleteB=False)
     occ.remove(getDimTags(3, [kill_box, base_ellipsoid]), recursive=True)
     return ellipsoid_tags
 
+
 def gdml_torus(rmin, rmax, rtor, startphi, deltaphi):
     pa = occ.addPoint(rmin, 0, 0)
     pb = occ.addPoint(rmax, 0, 0)
     arm = occ.addLine(pa, pb)
-    crossSection = getDimTagsByDim(occ.revolve(getDimTags(1, arm), 0, 0, 0, 0, 1, 0, np.pi*2), 2)
+    crossSection = getDimTagsByDim(occ.revolve(getDimTags(1, arm), 0, 0, 0, 0, 1, 0, np.pi * 2), 2)
     occ.translate(crossSection, rtor, 0, 0)
     occ.rotate(crossSection, 0, 0, 0, 0, 0, 1, startphi)
     torus_tags_3d = getTagsByDim(occ.revolve(crossSection, 0, 0, 0, 0, 0, 1, deltaphi), 3)
@@ -277,14 +283,14 @@ def gdml_torusStack(rhoedge, zedge, rhoorigin, zorigin):
     assert len(zedge) > 1, "must have at least one segment"
     assert len(zorigin) == len(zedge) - 1, "zorigin must have one less element than zedge"
     assert len(zorigin) == len(rhoorigin), "zorigin must have the same length as rhoorgin"
-    
-    if all(zedge[i] < zedge[i+1] for i in range(len(zedge)-1)):
+
+    if all(zedge[i] < zedge[i + 1] for i in range(len(zedge) - 1)):
         rhoedge.reverse()
         zedge.reverse()
         rhoorigin.reverse()
         zorigin.reverse()
 
-    assert all(zedge[i] > zedge[i+1] for i in range(len(zedge)-1)), "zedge must be monotonically decreasing"
+    assert all(zedge[i] > zedge[i + 1] for i in range(len(zedge) - 1)), "zedge must be monotonically decreasing"
     # compute origin coordinates
     z0 = np.asarray(zorigin)
     r0 = np.asarray(rhoorigin)
@@ -307,7 +313,7 @@ def gdml_torusStack(rhoedge, zedge, rhoorigin, zorigin):
         firstpoint = occ.addPoint(0, 0, zedge[0])
         arcs.insert(0, occ.addLine(firstpoint, edges[0]))
         edges.insert(0, firstpoint)
-    if rhoedge[-1] != 0:         
+    if rhoedge[-1] != 0:
         lastPoint = occ.addPoint(0, 0, zedge[-1])
         arcs.append(occ.addLine(edges[-1], lastPoint))
         edges.append(lastPoint)
@@ -316,11 +322,11 @@ def gdml_torusStack(rhoedge, zedge, rhoorigin, zorigin):
     curveLoop = occ.addCurveLoop([bottomToTop, *arcs])
     plane = occ.addPlaneSurface([curveLoop])
     torus_stack_3d = getTagsByDim(
-        occ.revolve([[2, plane]], 
-                    0, 0, 0, 
-                    0, 0, 1, 
-                    2*np.pi), 
-    3)
+        occ.revolve([[2, plane]],
+                    0, 0, 0,
+                    0, 0, 1,
+                    2 * np.pi),
+        3)
     occ.remove(getDimTags(2, plane), recursive=True)
     return torus_stack_3d[0]
 
@@ -332,7 +338,7 @@ def gdml_eltube(dx, dy, dz):
         base_curve = occ.addEllipse(0, 0, -dz, dy, dx, zAxis=[0, 0, 1], xAxis=[0, 1, 0])
     base_curveLoop = occ.addCurveLoop([base_curve])
     base = occ.addPlaneSurface([base_curveLoop])
-    tube_tags_3d = getTagsByDim(occ.extrude([(2, base)], 0, 0, 2*dz), 3)
+    tube_tags_3d = getTagsByDim(occ.extrude([(2, base)], 0, 0, 2 * dz), 3)
     assert len(tube_tags_3d) == 1, f'Generate {len(tube_tags_3d)} solids instead of 1.'
     return tube_tags_3d[0]
 

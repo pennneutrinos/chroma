@@ -16,12 +16,10 @@ from chroma.rat import gen_mesh
 from .ratdb_parser import RatDBParser
 import gmsh
 from pathlib import Path
-from scipy import constants
 
 # To convert length and angle units to cm and radians
 
 units = gdml.units
-TwoPiHbarC = constants.value('reduced Planck constant times c in MeV fm') * 1e-6 * 2 * np.pi  # MeV * nm
 
 from chroma.demo.optics import vacuum
 
@@ -111,11 +109,11 @@ class Volume:
 
 
 class RATGeoLoader:
-    '''
-    This class supports loading a geometry from a GDML file by directly parsing 
+    """
+    This class supports loading a geometry from a GDML file by directly parsing
     the XML. A subset of GDML is supported here, and exceptions will be raised
     if the GDML uses unsupported features.
-    '''
+    """
 
     def __init__(self, gdml_file, refinement_order=0, ratdb_file=None, override_worldref=None):
         ''' 
@@ -150,7 +148,7 @@ class RATGeoLoader:
         for material_xml in materials:
             if material_xml.tag != 'material':
                 continue
-            self.materials_used.append(self.create_material(material_xml))
+            self.materials_used.append(gdml.create_material(self.matrix_map, material_xml))
             self.material_lookup[material_xml.get('name')] = len(self.materials_used) - 1
         solids = gdml_tree.find('solids')
         self.solid_xml_map = {solid.get('name'): solid for solid in solids}
@@ -158,7 +156,7 @@ class RATGeoLoader:
         self.surfaces_used = [None]
         self.surface_lookup = {None: -1}
         for surface_idx, surface_xml in enumerate(surfaces, start=1):  # 0 is reserved for no surface
-            self.surfaces_used.append(self.create_surface(surface_xml))
+            self.surfaces_used.append(gdml.create_surface(self.matrix_map, surface_xml))
             self.surface_lookup[surface_xml.get('name')] = surface_idx
 
         # volumes
@@ -208,13 +206,13 @@ class RATGeoLoader:
         self.ratdb_parser = RatDBParser(ratdb_file)
 
     def get_pos_rot(self, elem, refs=('position', 'rotation')):
-        ''' 
+        """
         Searches for position and rotation children of an Element. The found
         Elements are returned as a tuple as a tuple. Checks for elements
-        defined inline as position, rotation tags, and dereferences 
-        positionref, rotationref using defined values. Returns None if 
+        defined inline as position, rotation tags, and dereferences
+        positionref, rotationref using defined values. Returns None if
         neither inline nor ref is specified.
-        '''
+        """
         pos_ref, rot_ref = refs
         pos = elem.find(pos_ref)
         if pos is None:
@@ -229,12 +227,12 @@ class RATGeoLoader:
         return pos, rot
 
     def build_mesh(self, solid_ref):
-        '''
+        """
         Build a mesh for the solid identified by solid_ref if the named
         solid has not been built. If it has been built, a cached mesh is returned.
         If the tag of the solid is not yet implemented, or it uses features not
         yet implemented, this will raise an exception.
-        '''
+        """
         if self.solidsToIgnore(solid_ref):
             logger.info(f"Ignoring solid: {solid_ref}")
             return None
@@ -278,19 +276,19 @@ class RATGeoLoader:
 
     def build_detector(self, detector=None, volume_classifier=_default_volume_classifier, solids_to_ignore=None,
                        no_union=None):
-        '''
+        """
         Add the meshes defined by this GDML to the detector. If detector is not
         specified, a new detector will be created.
-        
+
         The volume_classifier should be a function that returns a classification
         of the volume ('pmt','solid','omit') and kwargs passed to the Solid
         constructor for that volume: material1, material2, color, surface
-        
+
         The different classifications have different behaviors:
         'pmt' should specify channel_type in the kwargs to identify the channel, calls add_pmt
         'solid' will add a normal solid to the Chroma geometry, calls add_solid
         'omit' will not add the Solid to the Chroma geometry
-        '''
+        """
         if detector is None:
             detector = Detector(vacuum)
         if solids_to_ignore is None:  # by default ignore nothing
@@ -336,13 +334,13 @@ class RATGeoLoader:
         return detector
 
     def retrieve_mesh(self):
-        '''
+        """
         Processes solid into a chroma Mesh.
         tag_or_mesh is either a gmsh tag that relates to the root solid, or a chroma.Mesh object.
         If tag_or_mesh is a gmsh tag, apply downstream gmsh mesh generation routine and package the generated mesh into a
         chorma.Mesh object. If tag_or_mesh is already a mesh, do nothing. Simply return the mesh.
         Returns a chroma_mesh or None.
-        '''
+        """
         occ = gmsh.model.occ
         mesh = gmsh.model.mesh
         occ.synchronize()
@@ -426,7 +424,7 @@ class RATGeoLoader:
                 # logger.info(f"Added {len(volume.mesh.triangles)} triangles and {len(volume.mesh.vertices)} vertices")
         logger.info(f"Total after adding Tess Objects: {nFaces} triangles and {nVtxs} vertices")
         n_vertex_cumulative = np.cumsum([len(mesh.vertices) for mesh in concat_meshes])
-        n_vertex_cumulative = np.concatenate([[0], n_vertex_cumulative[:-1]])
+        n_vertex_cumulative = np.concatenate([np.zeros(1), n_vertex_cumulative[:-1]])
         detector.mesh = Mesh(
             np.concatenate([mesh.vertices for mesh in concat_meshes]),
             np.concatenate([mesh.triangles + n_vertex_cumulative[i] for i, mesh in enumerate(concat_meshes)]),
@@ -489,155 +487,6 @@ class RATGeoLoader:
     def visualize(self):
         gmsh.fltk.run()
 
-    def create_material(self, material_xml) -> chroma.geometry.Material:
-        name = material_xml.get('name')
-        material = chroma.geometry.Material(name)
-        name_nouid = name.split('0x')[0]
-        density = gdml.get_val(material_xml.find('D'), attr='value')
-        density *= units.get(material_xml.find('D').get('unit'), 1.0)
-        material.density = density
-        material.set('refractive_index', 1.0)
-        material.set('absorption_length', 1e6)
-        material.set('scattering_length', 1e6)
-        for comp in material_xml.findall('fraction'):
-            element = comp.get('ref').split('0x')[0]
-            fraction = gdml.get_val(comp, attr='n')
-            material.composition[element] = fraction
-
-        # Material-wise properties
-        num_comp = 0
-        optical_props = material_xml.findall('property')
-        for optical_prop in optical_props:
-            data_ref = optical_prop.get('ref')
-            data = gdml.get_matrix(self.matrix_map[data_ref])
-            property_name = optical_prop.get('name')
-            if property_name == 'RINDEX':
-                material.refractive_index = _convert_to_wavelength(data)
-            elif property_name == 'ABSLENGTH':
-                material.absorption_length = _convert_to_wavelength(data)
-            elif property_name == 'RSLENGTH':
-                material.scattering_length = _convert_to_wavelength(data)
-            elif property_name == "SCINTILLATION":
-                material.scintillation_spectrum = _convert_to_wavelength(data)
-            elif property_name == "SCINT_RISE_TIME":
-                material.scintillation_rise_time = data.item()
-            elif property_name == "LIGHT_YIELD":
-                material.scintillation_light_yield = data.item()
-            elif property_name.startswith('SCINTWAVEFORM'):
-                if material.scintillation_waveform is None:
-                    material.scintillation_waveform = {}
-                # extract the property name from the SCINTWAVEFORM prefix
-                material.scintillation_waveform[property_name[len('SCINTWAVEFORM'):]] = data
-            elif property_name.startswith('SCINTMOD'):
-                if material.scintillation_mod is None:
-                    material.scintillation_mod = {}
-                # extract the property name from the SCINTMOD prefix
-                material.scintillation_mod[property_name[len('SCINTMOD'):]] = data
-            elif property_name == 'NUM_COMP':
-                num_comp = int(data.item())
-
-        # Component wise properties.
-        reemission_spectrum = None
-        # RAT does not support component-wise reemission spectra. All components share the
-        # same spectrum.
-        if num_comp > 0:
-            for prop_name in ['SCINTILLATION_WLS', 'SCINTILLATION']:
-                reemission_spectrum = self._find_property(prop_name, optical_props)
-                if reemission_spectrum is not None:
-                    reemission_spectrum = _convert_to_wavelength(reemission_spectrum)
-                    reemission_spectrum = _pdf_to_cdf(reemission_spectrum)
-                    break
-            assert reemission_spectrum is not None, f"No reemission spectrum found for material {name}"
-        for i_comp in range(num_comp):
-            reemission_prob = self._find_property('REEMISSION_PROB' + str(i_comp), optical_props)
-            if reemission_prob is not None:
-                reemission_prob = _convert_to_wavelength(reemission_prob)
-                material.comp_reemission_prob.append(reemission_prob)
-            else:
-                material.comp_reemission_prob.append(np.column_stack((
-                    chroma.geometry.standard_wavelengths,
-                    np.zeros(chroma.geometry.standard_wavelengths.size))))
-            material.comp_reemission_wvl_cdf.append(reemission_spectrum)
-
-            reemission_waveform = self._find_property('REEMITWAVEFORM' + str(i_comp), optical_props)
-            if reemission_waveform is not None:
-                if reemission_waveform.flatten()[0] < 0:
-                    reemission_waveform = _exp_decay_cdf(reemission_waveform)  # FIXME: use scintillation rise time?
-                else:
-                    reemission_waveform = _pdf_to_cdf(reemission_waveform)
-            else:
-                reemission_waveform = np.column_stack(([0, 1], [0, 0]))  # dummy waveform
-            material.comp_reemission_time_cdf.append(reemission_waveform)
-
-            absorption_length = self._find_property('ABSLENGTH' + str(i_comp), optical_props)
-            assert absorption_length is not None, "No component-wise absorption length found for material"
-            material.comp_absorption_length.append(_convert_to_wavelength(absorption_length))
-        return material
-
-    def create_surface(self, surface_xml) -> chroma.geometry.Surface:
-        name = surface_xml.get('name')
-        surface = chroma.geometry.Surface(name)
-        model = gdml.get_val(surface_xml, attr='model')
-        surface_type = gdml.get_val(surface_xml, attr='type')
-        finish = gdml.get_val(surface_xml, attr='finish')
-        value = gdml.get_val(surface_xml, attr='value')
-        assert model == 0 or model == 1 or model == 4, "Only glisur, unified, and dichroic models are supported"
-        assert surface_type == 0 or surface_type == 4, "Only dielectric_metal and dichroic surfaces are supported"
-        assert finish == 0 or finish == 1 or finish == 3, \
-            "Only polished, ground, and polishedfrontpainted are supported"
-        specular_component = value if model == 0 else 1 - value  # this is a hack, because chroma does not support the
-        # same time of diffusive reflection
-        if finish == 1:
-            surface.transmissive = False
-        abslength = None
-        for optical_prop in surface_xml.findall('property'):
-            data_ref = optical_prop.get('ref')
-            property_name = optical_prop.get('name')
-            data = gdml.get_matrix(self.matrix_map[data_ref])
-            if property_name == 'REFLECTIVITY':
-                reflectivity = _convert_to_wavelength(data)
-                reflectivity_specular = reflectivity
-                reflectivity_specular[:, 1] *= specular_component
-                reflectivity_diffuse = reflectivity
-                reflectivity_diffuse[:, 1] *= (1 - specular_component)
-                surface.reflect_specular = _convert_to_wavelength(reflectivity_specular)
-                surface.reflect_diffuse = _convert_to_wavelength(reflectivity_diffuse)
-            if property_name == 'THICKNESS':
-                thicknesses = data[:, 1]
-                if not np.allclose(thicknesses, thicknesses[0]):
-                    logger.warning(f"Surface {name} has non-uniform thicknesses. Average will be taken")
-                surface.thickness = np.mean(thicknesses)
-            if property_name == 'RINDEX':
-                surface.eta = _convert_to_wavelength(data)
-            if property_name == 'KINDEX':
-                surface.k = _convert_to_wavelength(data)
-                surface.model = 1  # if k index is specified, we have a complex surface model
-            if property_name == 'EFFICIENCY':
-                surface.detect = _convert_to_wavelength(data)
-            if property_name == "ABSLENGTH":
-                abslength = _convert_to_wavelength(data)
-        if abslength is not None:
-            surface.absorb = abslength
-            surface.absorb[:, 1] = 1 - np.exp(-surface.thickness / surface.absorb[:, 1])
-        if model == 4 and surface_type == 4:
-            assert surface_xml.find('dichroic_data') is not None, "Dichroic surfaces must have dichroic_data"
-            surface.model = 3  # CUDA dichroic model
-            dichroic_data = surface_xml.find('dichroic_data')
-            x_length = gdml.get_val(dichroic_data, attr='x_length')
-            y_length = gdml.get_val(dichroic_data, attr='y_length')
-            x_val_elem = dichroic_data.find('x')
-            wvls = gdml.get_vector(x_val_elem)
-            y_val_elem = dichroic_data.find('y')
-            angles = gdml.get_vector(y_val_elem)
-            data_elem = dichroic_data.find('data')
-            transmission_data = gdml.get_vector(data_elem).reshape(x_length, y_length)
-            reflection_data = 1 - transmission_data
-            angles = np.deg2rad(angles)
-            transmits = [np.asarray([wvls, transmission_data[:, i]]).T for i in range(y_length)]
-            reflects = [np.asarray([wvls, reflection_data[:, i]]).T for i in range(y_length)]
-            surface.dichroic_props = chroma.geometry.DichroicProps(angles, transmits, reflects)
-        return surface
-
     def fix_orphaned_border_surfaces(self):
         """
             RAT-PAC2 currently have a bug where one of the physical volumes that a border surface is assigned to does
@@ -699,41 +548,3 @@ class RATGeoLoader:
                     logger.info(f"Assigned PMT Channel {volume.pmt_channel} to {placement}, Type {volume.pmt_type}")
                     break
         logger.info(f"Assigned {self.nPMTs} PMT Channels")
-
-    def _find_property(self, name, properties):
-        for prop in properties:
-            if prop.get('name') == name:
-                data_ref = prop.get('ref')
-                data = gdml.get_matrix(self.matrix_map[data_ref])
-                return data
-        return None
-
-
-def _convert_to_wavelength(arr):
-    arr[:, 0] = TwoPiHbarC / arr[:, 0]
-    return arr[::-1]
-
-
-def _pdf_to_cdf(arr):
-    x, y = arr.T
-    yc = np.cumsum((y[1:] + y[:-1]) * (x[1:] - x[:-1]))
-    yc = np.concatenate([[0], yc])
-    if yc[-1] != 0:
-        yc /= yc[-1]
-    return np.column_stack([x, yc])
-
-
-def _exp_decay_cdf(arr, t_rise=0):
-    decays = np.exp(-arr[:, 0])
-    weights = np.exp(arr[:, 1])
-    max_time = 3.0 * np.max(decays)
-    min_time = np.min(decays)
-    bin_width = min_time / 100
-    times = np.arange(0, max_time + bin_width / 2, bin_width)
-    if t_rise == 0:
-        cdf = np.sum([a * (t * (1.0 - np.exp(-times / t))) / (t) for t, a in zip(decays, weights)], axis=0)
-    else:
-        cdf = np.sum(
-            [a * (t * (1.0 - np.exp(-times / t)) + t_rise * (np.exp(-times / t_rise) - 1)) / (t - t_rise) for t, a in
-             zip(decays, weights)], axis=0)
-    return np.column_stack([times, cdf])
