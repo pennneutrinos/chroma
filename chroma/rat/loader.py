@@ -517,12 +517,11 @@ class RATGeoLoader:
                 self.border_surfaces.append(border_surface)
 
     def add_pmt_info(self):
-        pmtinfo_tables = self.ratdb_parser.get_matching_entries(
-            table_name_match=lambda name: name.startswith('PMTINFO'),
+        pmt_arrays = self.ratdb_parser.get_matching_entries(
+            content_match=lambda entry: entry['name'] == 'GEO' and entry['type'] == 'pmtarray'
         )
-        pmt_array_names = [table['name'] for table in pmtinfo_tables]
-        pmt_volume_names = ['pmts_' + name[len('PMTINFO_'):].lower() + '_body_log'
-                            for name in pmt_array_names]
+        pmt_volume_names = [table['index'] + '_body_log' for table in pmt_arrays]
+        pmtinfo_tables = [self.ratdb_parser.get_entry(table['pos_table'], '') for table in pmt_arrays]
         pmt_array_positions = [np.array([table['x'], table['y'], table['z']]).T
                                for table in pmtinfo_tables]
         # pmt_array_positions = np.concatenate(pmt_array_positions)

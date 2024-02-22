@@ -120,12 +120,15 @@ class RatDBParser:
         return result
 
     def get_matching_entries(self, table_name_match: Optional[Callable] = None,
-                             index_match: Optional[Callable] = None) -> list[dict]:
+                             index_match: Optional[Callable] = None,
+                             content_match: Optional[Callable] = None) -> list[dict]:
         if table_name_match is None:
             table_name_match = lambda x: True
         if index_match is None:
             index_match = lambda x: True
-        return [entry for entry in self.entries if table_name_match(entry['name']) and index_match(entry['index'])]
+        if content_match is None:
+            content_match = lambda x: True
+        return [entry for entry in self.entries if table_name_match(entry['name']) and index_match(entry['index']) and content_match(entry)]
 
     def __str__(self):
         return f"""
