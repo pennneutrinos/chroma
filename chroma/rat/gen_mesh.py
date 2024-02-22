@@ -86,7 +86,7 @@ def gdml_boolean(a, b, op, pos=None, rot=None, firstpos=None, firstrot=None, del
     outDimTags, _ = result
     if len(outDimTags) == 0: return None
     if len(outDimTags) > 1:
-        logger.info("Note: more than one object created by boolean operation.")
+        logger.warning(f"Note: more than one object created by {op} operation.")
         return [DimTag[1] for DimTag in outDimTags]
     return outDimTags[0][1]
 
@@ -104,7 +104,7 @@ def genericCone(x, y, z, dx, dy, dz, r1, r2, tag=-1, angle=2 * np.pi):
 
 
 def gdml_polycone(startphi, deltaphi, zplane):
-    seg_list = []
+    segment_list = []
     zplane = sorted(zplane, key=lambda p: p['z'])
     for pa, pb in zip(zplane, zplane[1:]):
         # zplane has elements rmin, rmax, z
@@ -112,16 +112,19 @@ def gdml_polycone(startphi, deltaphi, zplane):
                                   0, 0, pb['z'] - pa['z'],
                                   pa['rmax'], pb['rmax'],
                                   angle=deltaphi)
-        segment_in = genericCone(0, 0, pa['z'],
-                                 0, 0, pb['z'] - pa['z'],
-                                 pa['rmin'], pb['rmin'],
-                                 angle=deltaphi)
-        segment = gdml_boolean(segment_out, segment_in, 'subtraction')
-        seg_list.append(segment)
+        if pa['rmin'] != 0 or pb['rmin'] != 0:
+            segment_in = genericCone(0, 0, pa['z'],
+                                    0, 0, pb['z'] - pa['z'],
+                                    pa['rmin'], pb['rmin'],
+                                    angle=deltaphi)
+            segment = gdml_boolean(segment_out, segment_in, 'subtraction')
+        else:
+            segment = segment_out
+        segment_list.append(segment)
     # weld everything together
-    result = seg_list.pop()
-    for seg in seg_list:
-        result = gdml_boolean(result, seg, 'union')
+    result = segment_list[0]
+    for segment in segment_list[1:]:
+        result = gdml_boolean(result, segment, op='union')
     occ.rotate(getDimTags(3, result), 0, 0, 0, 0, 0, 1, startphi)
     return result
 
