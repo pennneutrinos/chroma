@@ -487,6 +487,31 @@ propagate_complex(Photon &p, State &s, curandState &rng, Surface* surface, bool 
 
     float p_t = cuCrealf(p_g) * p_abs_t12 * p_abs_t12 * p_abs_t23 * p_abs_t23;
     p_t /= p_denom;
+    // calculate absorption probability at normal incidence for scaling QE
+    cuFloatComplex n_r12 = cuCdivf(cuCsubf(n1, n2), cuCaddf(n1, n2));
+    cuFloatComplex n_r23 = cuCdivf(cuCsubf(n2, n3), cuCaddf(n2, n3));
+    cuFloatComplex n_t12 = cuCdivf(cuCmulf(make_cuFloatComplex(2.0f,0.0f), n1), cuCaddf(n1, n2));
+    cuFloatComplex n_t23 = cuCdivf(cuCmulf(make_cuFloatComplex(2.0f,0.0f), n2), cuCaddf(n2, n3));
+    cuFloatComplex n_g = cuCdivf(n3, n1);
+
+    float n_abs_r12 = cuCabsf(n_r12);
+    float n_abs_r23 = cuCabsf(n_r23);
+    float n_abs_t12 = cuCabsf(n_t12);
+    float n_abs_t23 = cuCabsf(n_t23);
+    float n_arg_r12 = cuCargf(n_r12);
+    float n_arg_r23 = cuCargf(n_r23);
+    float n_u = n2_eta;
+    float n_v = n2_k;
+    float n_exp1 = exp(2.0f * n_v * e);
+    float n_exp2 = 1.0f / n_exp1;
+    float n_denom = n_exp1 +
+                    n_abs_r12 * n_abs_r12 * n_abs_r23 * n_abs_r23 * n_exp2 +
+                    2.0f * n_abs_r12 * n_abs_r23 * cosf(n_arg_r23 + n_arg_r12 + 2.0f * n_u * e);
+    float n_r = n_abs_r12 * n_abs_r12 * n_exp1 + n_abs_r23 * n_abs_r23 * n_exp2 +
+                2.0f * n_abs_r12 * n_abs_r23 * cosf(n_arg_r23 - n_arg_r12 + 2.0f * n_u * e);
+    n_r /= n_denom;
+    float n_t = cuCrealf(n_g) * n_abs_t12 * n_abs_t12 * n_abs_t23 * n_abs_t23;
+    n_t /= n_denom;
 
     // calculate s polarization fraction, identical to propagate_at_boundary
     float incident_angle = get_theta(s.surface_normal,-p.direction);
@@ -504,12 +529,19 @@ propagate_complex(Photon &p, State &s, curandState &rng, Surface* surface, bool 
     float normal_probability = normal_coefficient * normal_coefficient; // i.e. s polarization fraction
 
     float transmit = normal_probability * s_t + (1.0f - normal_probability) * p_t;
-    if (!surface->transmissive)
+    float transmit_normal_incidence = n_t;
+    if (!surface->transmissive){
         transmit = 0.0f;
+        transmit_normal_incidence = 0.0f;
+    }
 
     float reflect = normal_probability * s_r + (1.0f - normal_probability) * p_r;
+    float reflect_normal_incidence = n_r;
     float absorb = 1.0f - transmit - reflect;
+    float absorb_normal_incidence = 1.0f - transmit_normal_incidence - reflect_normal_incidence;
 
+    detect  /= absorb_normal_incidence; // scale detection efficiency based on absorption.
+    // See https://github.com/rat-pac/ratpac-two/blob/9b64d68fe0bf31a9f83ef9ab488011b2e344ab98/src/physics/src/GLG4PMTOpticalModel.cc#L378
     if (use_weights && p.weight > WEIGHT_LOWER_THRESHOLD && absorb < (1.0f - WEIGHT_LOWER_THRESHOLD)) {
         // Prevent absorption and reweight accordingly
         float survive = 1.0f - absorb;
