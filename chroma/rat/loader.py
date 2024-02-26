@@ -197,6 +197,8 @@ class RATGeoLoader:
         gmsh.option.setNumber('General.Verbosity', 2)
         gmsh.option.setNumber('General.NumThreads', 0)
         gmsh.option.setNumber('Geometry.ToleranceBoolean', 0.0001)
+        gmsh.option.setNumber('Geometry.OCCParallel', 1)
+        gmsh.option.setNumber('Mesh.MeshSizeMax', 100)
         self.triangle_typeid = gmsh.model.mesh.getElementType('Triangle', 1)
 
         # gmsh.option.setNumber('Geometry.Tolerance', 0.001)
@@ -362,15 +364,28 @@ class RATGeoLoader:
         colors = []
         surface_tag_to_properties = self.assign_surface_properties()
         for surf_tag, prop in surface_tag_to_properties.items():
-            mref_in, mref_out = prop['mrefs']
+            vol_a, vol_b = prop['volumes']
             surface_ref = prop['surface']
             pmt_channel = prop['pmt_channel']
             solid_id = 0 if pmt_channel is None else pmt_channel + 1
             color = DEFAULT_PMT_COLOR if pmt_channel is not None else DEFAULT_SOLID_COLOR
-            logger.info(f"Processing surface {surf_tag} with materials {mref_in} and {mref_out}")
+            vol_a_name = vol_a.name if vol_a is not None else 'OUTSIDE'
+            vol_b_name = vol_b.name if vol_b is not None else 'OUTSIDE'
+            vol_a_mref = vol_a.material_ref if vol_a is not None else self.world.material_ref
+            vol_b_mref = vol_b.material_ref if vol_b is not None else self.world.material_ref
+            logger.info(f"Processing surface {surf_tag} between {vol_a_name} and {vol_b_name}")
             face_tags_for_surf, node_tag_per_face_for_surf = mesh.getElementsByType(self.triangle_typeid, surf_tag)
             # face_tags_for_surf -= 1  # because tags are 1-indexed
             # node_tag_per_face_for_surf = np.reshape(node_tags_for_surf, (-1, 3))
+            # fancy numpy magic for assigning node indices to faces
+            node_idx_per_face_for_surf = np.vectorize(node_tag_to_index.get)(node_tag_per_face_for_surf)
+            orientation = gen_mesh.surface_orientation(node_idx_per_face_for_surf, coords, prop['volumes'])
+            node_idx_per_face.extend(node_idx_per_face_for_surf)
+            # material assignment
+            if orientation == 1:
+                mref_in, mref_out = vol_a_mref, vol_b_mref
+            else:
+                mref_in, mref_out = vol_b_mref, vol_a_mref
             surf_material_idx_in = self.material_lookup[mref_in]
             surf_material_idx_out = self.material_lookup[mref_out]
             surf_surface_idx = self.surface_lookup[surface_ref]
@@ -379,9 +394,7 @@ class RATGeoLoader:
             surfaces.extend([surf_surface_idx] * len(face_tags_for_surf))
             solid_ids.extend([solid_id] * len(face_tags_for_surf))
             colors.extend([color] * len(face_tags_for_surf))
-            # fancy numpy magic for assigning node indices to faces
-            node_idx_per_face_for_surf = np.vectorize(node_tag_to_index.get)(node_tag_per_face_for_surf)
-            node_idx_per_face.extend(node_idx_per_face_for_surf)
+
             nFaces += len(face_tags_for_surf)
         node_idx_per_face = np.reshape(node_idx_per_face, (-1, 3))
         detector = Detector(detector_material=chroma.geometry.Material(
@@ -408,8 +421,8 @@ class RATGeoLoader:
         concat_outer_material_index = [detector.outer_material_index]
         concat_surface_index = [detector.surface_index]
         for volume in self.placement_to_volume_map.values():
-            logger.info(f"Adding tessellated solid {volume.name} to the geometry")
             if volume.mesh is not None:
+                logger.info(f"Adding tessellated solid {volume.name} to the geometry")
                 concat_meshes.append(volume.mesh)
                 concat_colors.append(np.ones(len(volume.mesh.triangles)) * DEFAULT_SOLID_COLOR)
                 concat_solid_id.append(np.ones(len(volume.mesh.triangles), dtype=int))
@@ -464,13 +477,13 @@ class RATGeoLoader:
         # Assign material to surfaces now
         surface_tags_to_materialrefs = {}
         for surf_tag, placementNames in surface_tags_to_placementNames.items():
-            properties = {'mrefs': [], 'surface': None, 'pmt_channel': None}
+            properties = {'volumes': [], 'surface': None, 'pmt_channel': None}
             for pname in placementNames:
                 if pname == '/':
-                    properties['mrefs'].append(self.world.material_ref)
+                    properties['volumes'].append(None)
                     continue
                 else:
-                    properties['mrefs'].append(self.placement_to_volume_map[pname].material_ref)
+                    properties['volumes'].append(self.placement_to_volume_map[pname])
                     if self.placement_to_volume_map[pname].skin_surface is not None:
                         assert properties['surface'] is None, f"Surface is assigned twice for {pname}"
                         properties['surface'] = self.placement_to_volume_map[pname].skin_surface

@@ -376,3 +376,59 @@ def conform_model(root_volume):
     logger.debug(f"Conforming children of {root_volume.placementName} complete!")
     for child in root_volume.children:
         conform_model(child)
+
+
+def surface_orientation(node_idx, coords, volumes):
+    """
+    Determine the orientation of a surface with respect to a volume. The orientation is determined by the normal
+    vector of the surface.
+    Args:
+        node_idx: the index of the node that defines the surface.
+        coords: the coordinates of the nodes.
+        volumes: the volumes in the model.
+
+    Returns:
+        1 if the surface points out of volumes[0], -1 if the surface points into volumes[0].
+    """
+    triangles = np.reshape(node_idx, (-1, 3))
+    v0 = coords[triangles[:, 0]]
+    v1 = coords[triangles[:, 1]]
+    v2 = coords[triangles[:, 2]]
+    normals = np.cross(v1-v0, v2-v1)
+    normals /= np.linalg.norm(normals, axis=1)[:, np.newaxis]
+    centers = np.mean([v0, v1, v2], axis=0)
+    test_points = v0 + normals * 1e-4
+    # randomly select from test_points
+    test_points = test_points[np.random.choice(len(test_points), min(20, len(test_points)), replace=False)]
+    test_result_vol0 = gmsh.model.isInside(3, volumes[0].gmsh_tag, test_points.flatten()) if volumes[0] else 0
+    test_result_vol1 = gmsh.model.isInside(3, volumes[1].gmsh_tag, test_points.flatten()) if volumes[1] else 0
+    vol0_passed = test_result_vol0 > (len(test_points) * 0.8)
+    vol1_passed = test_result_vol1 > (len(test_points) * 0.8)
+    if vol0_passed and not vol1_passed:
+        # surface points out of vol1, into vol0
+        return -1
+    if vol1_passed and not vol0_passed:
+        # surface points out of vol0, into vol1
+        return 1
+    if vol0_passed and vol1_passed:
+        # vol0 and vol1 is actually hierarchical, and the surface points into the daughter volume
+        if volumes[0] in volumes[1].children:
+            return -1
+        if volumes[1] in volumes[0].children:
+            return 1
+        raise ValueError("Surface orientation cannot be determined. Surface seem to point into both volumes, "
+                         "yet they do not have parental relationships. Overlap?")
+
+    # one of the volume is outside the simulated volume. Going outward.
+    if volumes[0] is None:
+        return -1
+    if volumes[1] is None:
+        return 1
+    # both fails -- daughter and mother share the same surface, and we are pointing away from both
+    if volumes[0] in volumes[1].children:
+        return 1
+    if volumes[1] in volumes[0].children:
+        return -1
+    raise ValueError("Surface orientation cannot be determined. Surface seem to point into neither volume.")
+
+
