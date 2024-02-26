@@ -306,7 +306,7 @@ def create_material(matrix_map: Dict[Optional[str], et.Element], material_xml: e
         elif property_name == 'RSLENGTH':
             material.scattering_length = _convert_to_wavelength(data)
         elif property_name == "SCINTILLATION":
-            material.scintillation_spectrum = _convert_to_wavelength(data)
+            material.scintillation_spectrum = _convert_to_wavelength(data, dy_dwavelength=True)
         elif property_name == "SCINT_RISE_TIME":
             material.scintillation_rise_time = data.item()
         elif property_name == "LIGHT_YIELD":
@@ -332,7 +332,7 @@ def create_material(matrix_map: Dict[Optional[str], et.Element], material_xml: e
         for prop_name in ['SCINTILLATION_WLS', 'SCINTILLATION']:
             reemission_spectrum = _find_property(matrix_map, prop_name, optical_props)
             if reemission_spectrum is not None:
-                reemission_spectrum = _convert_to_wavelength(reemission_spectrum)
+                reemission_spectrum = _convert_to_wavelength(reemission_spectrum, dy_dwavelength=True)
                 reemission_spectrum = _pdf_to_cdf(reemission_spectrum)
                 break
         assert reemission_spectrum is not None, f"No reemission spectrum found for material {name}"
@@ -363,8 +363,10 @@ def create_material(matrix_map: Dict[Optional[str], et.Element], material_xml: e
     return material
 
 
-def _convert_to_wavelength(arr):
+def _convert_to_wavelength(arr, dy_dwavelength=False):
     arr[:, 0] = TwoPiHbarC / arr[:, 0]
+    if dy_dwavelength:
+        arr[:, 1] *= TwoPiHbarC / (arr[:, 0]**2)
     return arr[::-1]
 
 
