@@ -419,7 +419,7 @@ propagate_complex(Photon &p, State &s, curandState &rng, Surface* surface, bool 
     cuFloatComplex cos1 = make_cuFloatComplex(cosf(theta), 0.0f);
     cuFloatComplex sin1 = make_cuFloatComplex(sinf(theta), 0.0f);
 
-    float e = 2.0f * PI * surface->thickness / p.wavelength;
+    float e = 2.0f * PI * surface->thickness * 1.0e6 / p.wavelength; // Convert thickness unit mm->nm
     cuFloatComplex ratio13sin = cuCmulf(cuCmulf(cuCdivf(n1, n3), cuCdivf(n1, n3)), cuCmulf(sin1, sin1));
     cuFloatComplex cos3 = cuCsqrtf(cuCsubf(make_cuFloatComplex(1.0f,0.0f), ratio13sin));
     cuFloatComplex ratio12sin = cuCmulf(cuCmulf(cuCdivf(n1, n2), cuCdivf(n1, n2)), cuCmulf(sin1, sin1));
