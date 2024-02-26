@@ -226,7 +226,9 @@ def create_surface(matrix_map: Dict[Optional[str], et.Element], surface_xml: et.
     specular_component = value if model == 0 else 1 - value  # this is a hack, because chroma does not support the
     # same time of diffusive reflection
     if finish == 1:
-        surface.transmissive = False
+        surface.transmissive = 0
+    else:
+        surface.transmissive = 1
     abslength = None
     for optical_prop in surface_xml.findall('property'):
         data_ref = optical_prop.get('ref')
