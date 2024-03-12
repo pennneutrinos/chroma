@@ -1,4 +1,5 @@
 import numpy as np
+from scipy.spatial.transform import Rotation
 
 def get_perp(x):
     """Returns an arbitrary vector perpendicular to `x`."""
@@ -19,6 +20,16 @@ def make_rotation_matrix(phi, n):
 
     return np.cos(phi)*np.identity(3) + (1-np.cos(phi))*np.outer(n,n) + \
         np.sin(phi)*np.array([[0,n[2],-n[1]],[-n[2],0,n[0]],[n[1],-n[0],0]])
+
+
+def matrix_to_rotvec(rot_matrix):
+    r = Rotation.from_matrix(rot_matrix)
+    rotvec = r.as_rotvec()
+    angle = np.linalg.norm(rotvec)
+    if angle == 0:
+        return np.array([0, 0, 1]), 0
+    return rotvec/angle, angle
+
 
 def rotate(x, phi, n):
     """

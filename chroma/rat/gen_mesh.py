@@ -1,5 +1,8 @@
 import gmsh
 
+from chroma.geometry import Mesh
+from chroma import transform
+
 occ = gmsh.model.occ
 
 import numpy as np
@@ -11,8 +14,10 @@ from chroma.log import logger
 def getTagsByDim(dimTags, dim):
     return [dimTag[1] for dimTag in dimTags if dimTag[0] == dim]
 
+
 def getDimTagsByDim(dimTags, dim):
     return [dimTag for dimTag in dimTags if dimTag[0] == dim]
+
 
 def getDimTags(dim, tags):
     if type(tags) == int:
@@ -22,15 +27,28 @@ def getDimTags(dim, tags):
         result.append((dim, tag))
     return result
 
+
 def gdml_transform(obj, pos=None, rot=None):
-    if pos == None: 
+    if pos is None:
         pos = [0., 0., 0.]
-    if rot == None:
+    if rot is None:
         rot = [0., 0., 0.]
-    for axis_idx, angle in enumerate(rot):
-        axis = np.zeros(3)
-        axis[axis_idx]=1
-        occ.rotate(getDimTags(3, obj), 0., 0., 0., axis[0], axis[1], axis[2], angle)
+    if np.ndim(rot) == 1:
+        assert len(rot) == 3, "rotation defined in not 3 dimensions. Too much string theory?"
+        for axis_idx, angle in enumerate(rot):
+            # make the xyz axis
+            axis = np.zeros(3)
+            axis[axis_idx] = 1
+            occ.rotate(getDimTags(3, obj), 0., 0., 0., axis[0], axis[1], axis[2], angle)
+
+    else:  # a rotation matrix is specified:
+        assert np.shape(rot) == (3, 3), f"rotation has shape {np.shape(rot)}. Too much string theory?"
+        assert len(pos) == 3, f"translation has shape {np.shape(pos)}. Too much string theory?"
+        # define the first 12 entries of a 4x4 transformation matrix.
+        # https://www.brainvoyager.com/bv/doc/UsersGuide/CoordsAndTransforms/SpatialTransformationMatrices.html
+        rot_axis, rot_angle = transform.matrix_to_rotvec(rot)
+        if rot_angle != 0:
+            occ.rotate(getDimTags(3, obj), 0, 0, 0, *rot_axis, rot_angle)
     occ.translate(getDimTags(3, obj), pos[0], pos[1], pos[2])
     return obj
 
@@ -44,7 +62,8 @@ def gdml_boolean(a, b, op, pos=None, rot=None, firstpos=None, firstrot=None, del
             return a
     if op == 'subtraction':
         assert a is not None, "Subtraction requires first object to be not None"
-        if b is None: return a #Subtracting nothing is a no-op
+        if b is None:
+            return a  # Subtracting nothing is a no-op
     if op == 'intersection':
         assert a is not None and b is not None, "Intersection requires both objects to be not None"
     a = gdml_transform(a, pos=firstpos, rot=firstrot)
@@ -57,15 +76,20 @@ def gdml_boolean(a, b, op, pos=None, rot=None, firstpos=None, firstrot=None, del
         else:
             result = occ.fuse(getDimTags(3, a), getDimTags(3, b), removeObject=deleteA, removeTool=deleteB)
     elif op in ('intersection'):
-        result = occ.intersect(getDimTags(3, a), getDimTags(3, b), removeObject=deleteA, removeTool=deleteB)
+        occ.synchronize()
+        result = occ.intersect(objectDimTags=getDimTags(3, a),
+                               toolDimTags=getDimTags(3, b),
+                               removeObject=deleteA, removeTool=deleteA)
+        occ.synchronize()
     else:
         raise NotImplementedError(f'{op} is not implemented.')
     outDimTags, _ = result
     if len(outDimTags) == 0: return None
     if len(outDimTags) > 1:
-        logger.info("Note: more than one object created by boolean operation.")
+        logger.warning(f"Note: more than one object created by {op} operation.")
         return [DimTag[1] for DimTag in outDimTags]
     return outDimTags[0][1]
+
 
 def gdml_box(dx, dy, dz):
     result = occ.addBox(-dx / 2, -dy / 2, -dz / 2, dx, dy, dz)
@@ -80,7 +104,7 @@ def genericCone(x, y, z, dx, dy, dz, r1, r2, tag=-1, angle=2 * np.pi):
 
 
 def gdml_polycone(startphi, deltaphi, zplane):
-    seg_list = []
+    segment_list = []
     zplane = sorted(zplane, key=lambda p: p['z'])
     for pa, pb in zip(zplane, zplane[1:]):
         # zplane has elements rmin, rmax, z
@@ -88,16 +112,19 @@ def gdml_polycone(startphi, deltaphi, zplane):
                                   0, 0, pb['z'] - pa['z'],
                                   pa['rmax'], pb['rmax'],
                                   angle=deltaphi)
-        segment_in = genericCone(0, 0, pa['z'],
-                                 0, 0, pb['z'] - pa['z'],
-                                 pa['rmin'], pb['rmin'],
-                                 angle=deltaphi)
-        segment = gdml_boolean(segment_out, segment_in, 'subtraction')
-        seg_list.append(segment)
+        if pa['rmin'] != 0 or pb['rmin'] != 0:
+            segment_in = genericCone(0, 0, pa['z'],
+                                    0, 0, pb['z'] - pa['z'],
+                                    pa['rmin'], pb['rmin'],
+                                    angle=deltaphi)
+            segment = gdml_boolean(segment_out, segment_in, 'subtraction')
+        else:
+            segment = segment_out
+        segment_list.append(segment)
     # weld everything together
-    result = seg_list.pop()
-    for seg in seg_list:
-        result = gdml_boolean(result, seg, 'union')
+    result = segment_list[0]
+    for segment in segment_list[1:]:
+        result = gdml_boolean(result, segment, op='union')
     occ.rotate(getDimTags(3, result), 0, 0, 0, 0, 0, 1, startphi)
     return result
 
@@ -177,7 +204,6 @@ def solid_polyhedra(startphi, deltaphi, numsides, r_list, z_list):
     return result
 
 
-
 def gdml_polyhedra(startphi, deltaphi, numsides, zplane):
     # First vertex is on the positive X half-axis.
     # Specified radius is distance from center to the middle of the edge
@@ -217,6 +243,7 @@ def gdml_tube(rmin, rmax, z, startphi, deltaphi):
 def gdml_orb(r):
     return occ.addSphere(0, 0, 0, r)
 
+
 def gdml_sphere(rmin, rmax, startphi, deltaphi, starttheta, deltatheta):
     pa = occ.addPoint(0, 0, rmin)
     pb = occ.addPoint(0, 0, rmax)
@@ -229,20 +256,23 @@ def gdml_sphere(rmin, rmax, startphi, deltaphi, starttheta, deltatheta):
     assert len(sphere_tags_3d) == 1, f'Generated {len(sphere_tags_3d)} solids instead of 1.'
     return sphere_tags_3d[0]
 
+
 def gdml_ellipsoid(ax, by, cz, zcut1, zcut2):
     base_ellipsoid = occ.addSphere(0, 0, 0, ax)
     squish_b, squish_c = by / ax, cz / ax
-    ellipsoid = occ.dilate(getDimTags(3, base_ellipsoid), 0, 0, 0, 1, squish_b, squish_c)
-    kill_box = occ.addBox( -ax, -by, zcut1, 2*ax, 2*by, (zcut2-zcut1) )
-    ellipsoid_tags = gdml_boolean(base_ellipsoid, kill_box, 'intersection')
-    return ellipsoid_tags 
+    occ.dilate(getDimTags(3, base_ellipsoid), 0, 0, 0, 1, squish_b, squish_c)
+    kill_box = occ.addBox(-ax, -by, zcut1, 2 * ax, 2 * by, (zcut2 - zcut1))
+    # Do the intersection and then delete. GMSH throws weird errors otherwise. Bug?
+    ellipsoid_tags = gdml_boolean(base_ellipsoid, kill_box, 'intersection', deleteA=False, deleteB=False)
+    occ.remove(getDimTags(3, [kill_box, base_ellipsoid]), recursive=True)
+    return ellipsoid_tags
 
 
 def gdml_torus(rmin, rmax, rtor, startphi, deltaphi):
     pa = occ.addPoint(rmin, 0, 0)
     pb = occ.addPoint(rmax, 0, 0)
     arm = occ.addLine(pa, pb)
-    crossSection = getDimTagsByDim(occ.revolve(getDimTags(1, arm), 0, 0, 0, 0, 1, 0, np.pi*2), 2)
+    crossSection = getDimTagsByDim(occ.revolve(getDimTags(1, arm), 0, 0, 0, 0, 1, 0, np.pi * 2), 2)
     occ.translate(crossSection, rtor, 0, 0)
     occ.rotate(crossSection, 0, 0, 0, 0, 0, 1, startphi)
     torus_tags_3d = getTagsByDim(occ.revolve(crossSection, 0, 0, 0, 0, 0, 1, deltaphi), 3)
@@ -256,14 +286,14 @@ def gdml_torusStack(rhoedge, zedge, rhoorigin, zorigin):
     assert len(zedge) > 1, "must have at least one segment"
     assert len(zorigin) == len(zedge) - 1, "zorigin must have one less element than zedge"
     assert len(zorigin) == len(rhoorigin), "zorigin must have the same length as rhoorgin"
-    
-    if all(zedge[i] < zedge[i+1] for i in range(len(zedge)-1)):
+
+    if all(zedge[i] < zedge[i + 1] for i in range(len(zedge) - 1)):
         rhoedge.reverse()
         zedge.reverse()
         rhoorigin.reverse()
         zorigin.reverse()
 
-    assert all(zedge[i] > zedge[i+1] for i in range(len(zedge)-1)), "zedge must be monotonically decreasing"
+    assert all(zedge[i] > zedge[i + 1] for i in range(len(zedge) - 1)), "zedge must be monotonically decreasing"
     # compute origin coordinates
     z0 = np.asarray(zorigin)
     r0 = np.asarray(rhoorigin)
@@ -286,7 +316,7 @@ def gdml_torusStack(rhoedge, zedge, rhoorigin, zorigin):
         firstpoint = occ.addPoint(0, 0, zedge[0])
         arcs.insert(0, occ.addLine(firstpoint, edges[0]))
         edges.insert(0, firstpoint)
-    if rhoedge[-1] != 0:         
+    if rhoedge[-1] != 0:
         lastPoint = occ.addPoint(0, 0, zedge[-1])
         arcs.append(occ.addLine(edges[-1], lastPoint))
         edges.append(lastPoint)
@@ -295,11 +325,11 @@ def gdml_torusStack(rhoedge, zedge, rhoorigin, zorigin):
     curveLoop = occ.addCurveLoop([bottomToTop, *arcs])
     plane = occ.addPlaneSurface([curveLoop])
     torus_stack_3d = getTagsByDim(
-        occ.revolve([[2, plane]], 
-                    0, 0, 0, 
-                    0, 0, 1, 
-                    2*np.pi), 
-    3)
+        occ.revolve([[2, plane]],
+                    0, 0, 0,
+                    0, 0, 1,
+                    2 * np.pi),
+        3)
     occ.remove(getDimTags(2, plane), recursive=True)
     return torus_stack_3d[0]
 
@@ -311,6 +341,94 @@ def gdml_eltube(dx, dy, dz):
         base_curve = occ.addEllipse(0, 0, -dz, dy, dx, zAxis=[0, 0, 1], xAxis=[0, 1, 0])
     base_curveLoop = occ.addCurveLoop([base_curve])
     base = occ.addPlaneSurface([base_curveLoop])
-    tube_tags_3d = getTagsByDim(occ.extrude([(2, base)], 0, 0, 2*dz), 3)
+    tube_tags_3d = getTagsByDim(occ.extrude([(2, base)], 0, 0, 2 * dz), 3)
     assert len(tube_tags_3d) == 1, f'Generate {len(tube_tags_3d)} solids instead of 1.'
     return tube_tags_3d[0]
+
+
+def conform_model(root_volume):
+    """
+    Apply gmsh.model.occ.fragment on sibling volumes, therefore allow the volumes to share surfaces, making the mesh
+    "conformal".
+    Args:
+        root_volume: tag of the root volume in the model.
+    """
+    logger.info(f"Conforming children of {root_volume.placementName}")
+    if not root_volume.in_gmsh_model:
+        return
+    child_tags = []
+    for child in root_volume.children:
+        if child.in_gmsh_model:
+            child_tags.append(child.gmsh_tag)
+    logger.debug(f"There are {len(child_tags)} children")
+    if len(child_tags) > 1:
+        child_dimTags = getDimTags(3, child_tags)
+        occ.synchronize()
+        result_dimTags, result_mapping = occ.fragment(child_dimTags, child_dimTags)
+        result_tags = getTagsByDim(result_dimTags, 3)
+        if set(child_tags) != set(result_tags):
+            logger.warn(f"Children of {root_volume.placementName} potentially overlaps.")
+            for i, mapping in enumerate(result_mapping[:len(child_dimTags)]):
+                if len(mapping) > 1:
+                    for child in root_volume.children:
+                        if child.gmsh_tag == child_dimTags[i][1]:
+                            logger.warn(f"{child_dimTags[i]}:{child.placementName} -> {mapping}")
+    logger.debug(f"Conforming children of {root_volume.placementName} complete!")
+    for child in root_volume.children:
+        conform_model(child)
+
+
+def surface_orientation(node_idx, coords, volumes):
+    """
+    Determine the orientation of a surface with respect to a volume. The orientation is determined by the normal
+    vector of the surface.
+    Args:
+        node_idx: the index of the node that defines the surface.
+        coords: the coordinates of the nodes.
+        volumes: the volumes in the model.
+
+    Returns:
+        1 if the surface points out of volumes[0], -1 if the surface points into volumes[0].
+    """
+    triangles = np.reshape(node_idx, (-1, 3))
+    v0 = coords[triangles[:, 0]]
+    v1 = coords[triangles[:, 1]]
+    v2 = coords[triangles[:, 2]]
+    normals = np.cross(v1-v0, v2-v1)
+    normals /= np.linalg.norm(normals, axis=1)[:, np.newaxis]
+    centers = np.mean([v0, v1, v2], axis=0)
+    test_points = v0 + normals * 1e-4
+    # randomly select from test_points
+    test_points = test_points[np.random.choice(len(test_points), min(20, len(test_points)), replace=False)]
+    test_result_vol0 = gmsh.model.isInside(3, volumes[0].gmsh_tag, test_points.flatten()) if volumes[0] else 0
+    test_result_vol1 = gmsh.model.isInside(3, volumes[1].gmsh_tag, test_points.flatten()) if volumes[1] else 0
+    vol0_passed = test_result_vol0 > (len(test_points) * 0.8)
+    vol1_passed = test_result_vol1 > (len(test_points) * 0.8)
+    if vol0_passed and not vol1_passed:
+        # surface points out of vol1, into vol0
+        return -1
+    if vol1_passed and not vol0_passed:
+        # surface points out of vol0, into vol1
+        return 1
+    if vol0_passed and vol1_passed:
+        # vol0 and vol1 is actually hierarchical, and the surface points into the daughter volume
+        if volumes[0] in volumes[1].children:
+            return -1
+        if volumes[1] in volumes[0].children:
+            return 1
+        raise ValueError("Surface orientation cannot be determined. Surface seem to point into both volumes, "
+                         "yet they do not have parental relationships. Overlap?")
+
+    # one of the volume is outside the simulated volume. Going outward.
+    if volumes[0] is None:
+        return -1
+    if volumes[1] is None:
+        return 1
+    # both fails -- daughter and mother share the same surface, and we are pointing away from both
+    if volumes[0] in volumes[1].children:
+        return 1
+    if volumes[1] in volumes[0].children:
+        return -1
+    raise ValueError("Surface orientation cannot be determined. Surface seem to point into neither volume.")
+
+

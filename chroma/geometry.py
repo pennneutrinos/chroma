@@ -115,21 +115,31 @@ def silly_unique(arr):
 class Solid(object):
     """Solid object attaches materials, surfaces, and colors to each triangle
     in a Mesh object."""
-    def __init__(self, mesh, material1=None, material2=None, surface=None, color=0x33ffffff):
+    def __init__(self, mesh,
+                 inner_material=None, outer_material=None,
+                 surface=None, color=0x33ffffff,
+                 material1=None, material2=None  # deprecated
+                 ):
+        if material1 is not None or material2 is not None:
+            logger.warn('material1 and material2 are deprecated.  Use inner_material and outer_material instead.')
+            inner_material = material1
+            outer_material = material2
+        if inner_material is None:
+            inner_material = []
         self.mesh = mesh
-        if np.iterable(material1):
-            if len(material1) != len(mesh.triangles):
+        if np.iterable(inner_material):
+            if len(inner_material) != len(mesh.triangles):
                 raise ValueError('shape mismatch')
-            self.material1 = np.array(material1, dtype=object)
+            self.inner_material = np.array(inner_material, dtype=object)
         else:
-            self.material1 = np.tile(material1, len(self.mesh.triangles))
+            self.inner_material = np.tile(inner_material, len(self.mesh.triangles))
 
-        if np.iterable(material2):
-            if len(material2) != len(mesh.triangles):
+        if np.iterable(outer_material):
+            if len(outer_material) != len(mesh.triangles):
                 raise ValueError('shape mismatch')
-            self.material2 = np.array(material2, dtype=object)
+            self.outer_material = np.array(outer_material, dtype=object)
         else:
-            self.material2 = np.tile(material2, len(self.mesh.triangles))
+            self.outer_material = np.tile(outer_material, len(self.mesh.triangles))
 
         if np.iterable(surface):
             if len(surface) != len(mesh.triangles):
@@ -146,12 +156,12 @@ class Solid(object):
             self.color = np.tile(color, len(self.mesh.triangles)).astype(np.uint32)
 
         self.unique_materials = \
-            silly_unique(np.concatenate([self.material1, self.material2]))
+            silly_unique(np.concatenate([self.inner_material, self.outer_material]))
 
         self.unique_surfaces = silly_unique(self.surface)
 
     def __add__(self, other):
-        return Solid(self.mesh + other.mesh, np.concatenate((self.material1, other.material1)), np.concatenate((self.material2, other.material2)), np.concatenate((self.surface, other.surface)), np.concatenate((self.color, other.color)))
+        return Solid(self.mesh + other.mesh, np.concatenate((self.inner_material, other.inner_material)), np.concatenate((self.outer_material, other.outer_material)), np.concatenate((self.surface, other.surface)), np.concatenate((self.color, other.color)))
 
     def weld(self, other, shared_triangle_surface=None, shared_triangle_color=None):
         '''Merge this solid with another at any identical triangles.
@@ -178,31 +188,31 @@ class Solid(object):
 
         # create temporary second solid -- solid2 with duplicate triangles removed
         mesh = Mesh(other.mesh.vertices, np.delete(other.mesh.triangles, duplicates, 0))
-        material1 = np.delete(other.material1, duplicates, 0)
-        material2 = np.delete(other.material2, duplicates, 0)
+        inner_material = np.delete(other.inner_material, duplicates, 0)
+        outer_material = np.delete(other.outer_material, duplicates, 0)
         surface = np.delete(other.surface, duplicates, 0)
         color = np.delete(other.color, duplicates, 0)
 
         self.mesh = self.mesh + mesh
-        self.material1 = np.concatenate((self.material1, material1))
-        self.material2 = np.concatenate((self.material2, material2))
+        self.inner_material = np.concatenate((self.inner_material, inner_material))
+        self.outer_material = np.concatenate((self.outer_material, outer_material))
         self.surface = np.concatenate((self.surface, surface))
         self.color = np.concatenate((self.color, color))
 
         # set properties at interface
-        self.material2[mask] = other.material1[0]
+        self.outer_material[mask] = other.inner_material[0]
         if shared_triangle_surface is not None:
             self.surface[mask] = shared_triangle_surface
         if shared_triangle_color is not None:
             self.color[mask] = shared_triangle_color
 
     @memoize_method_with_dictionary_arg
-    def material1_indices(self, material_lookup):
-        return np.fromiter(map(material_lookup.get, self.material1), dtype=np.int32, count=len(self.material1))
+    def inner_material_indices(self, material_lookup):
+        return np.fromiter(map(material_lookup.get, self.inner_material), dtype=np.int32, count=len(self.inner_material))
 
     @memoize_method_with_dictionary_arg
-    def material2_indices(self, material_lookup):
-        return np.fromiter(map(material_lookup.get, self.material2), dtype=np.int32, count=len(self.material2))
+    def outer_material_indices(self, material_lookup):
+        return np.fromiter(map(material_lookup.get, self.outer_material), dtype=np.int32, count=len(self.outer_material))
 
     @memoize_method_with_dictionary_arg
     def surface_indices(self, surface_lookup):
@@ -223,7 +233,7 @@ class Material(object):
         self.scintillation_mod = None
         self.comp_reemission_prob = []
         self.comp_reemission_wvl_cdf = []
-        self.comp_reemission_times = []
+        self.comp_reemission_times = []  # FIXME: Not used?
         self.comp_reemission_time_cdf = []
         self.comp_absorption_length = []
         self.density = 0.0 # g/cm^3
@@ -365,9 +375,9 @@ class Geometry(object):
 
         material_lookup = dict(list(zip(self.unique_materials, list(range(len(self.unique_materials))))))
 
-        self.material1_index = np.concatenate([solid.material1_indices(material_lookup) for solid in self.solids])
+        self.inner_material_index = np.concatenate([solid.inner_material_indices(material_lookup) for solid in self.solids])
 
-        self.material2_index = np.concatenate([solid.material2_indices(material_lookup) for solid in self.solids])
+        self.outer_material_index = np.concatenate([solid.outer_material_indices(material_lookup) for solid in self.solids])
 
         self.unique_surfaces = list(silly_unique(np.concatenate([solid.unique_surfaces for solid in self.solids])))
 
