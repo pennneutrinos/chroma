@@ -14,4 +14,5 @@ distribute*.egg
 *.simg
 
 .vscode
+.idea
 env/

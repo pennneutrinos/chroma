@@ -200,8 +200,8 @@ class GPUGeometry(object):
         self.world_origin = ga.vec.make_float3(*geometry.bvh.world_coords.world_origin)
         self.world_scale = np.float32(geometry.bvh.world_coords.world_scale)
 
-        material_codes = (((geometry.material1_index & 0xff) << 24) |
-                          ((geometry.material2_index & 0xff) << 16) |
+        material_codes = (((geometry.inner_material_index & 0xff) << 24) |
+                          ((geometry.outer_material_index & 0xff) << 16) |
                           ((geometry.surface_index & 0xff) << 8)).astype(np.uint32)
         self.material_codes = ga.to_gpu(material_codes)
         colors = geometry.colors.astype(np.uint32)
