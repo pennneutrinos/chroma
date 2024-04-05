@@ -1,5 +1,6 @@
+import re
 import xml.etree.ElementTree as et
-from copy import deepcopy
+from copy import deepcopy, copy
 from typing import Optional
 
 import numpy as np
@@ -59,6 +60,7 @@ class Volume:
         self.in_gmsh_model = False
         self.gmsh_tag = -1
         self.mesh = None
+        self.subdetector: Optional[chroma.detector.Detector] = None
         self.skin_surface = None
         self.pmt_type = None
         self.pmt_channel = None
@@ -115,11 +117,14 @@ class RATGeoLoader:
     if the GDML uses unsupported features.
     """
 
-    def __init__(self, gdml_file, refinement_order=0, ratdb_file=None, override_worldref=None):
+    def __init__(self, gdml_file, refinement_order=0,
+                 ratdb_file=None,
+                 override_worldref=None,
+                 outside_material_ref=None):
         ''' 
         Read a geometry from the specified GDML file.
         '''
-        self.nPMTs = None
+        self.nPMTs = 0
         self.pmt_index_to_position = None
         self.pmt_index_to_type = None
         self.ratdb_parser = None
@@ -168,7 +173,12 @@ class RATGeoLoader:
             world_ref = override_worldref
         self.world = Volume(world_ref, self)
         self.placement_to_volume_map = self.world.flat_view()
-
+        if outside_material_ref is None:
+            self.outside_material = self.world.material_ref
+        else:
+            self.outside_material = outside_material_ref
+        assert self.outside_material in self.material_lookup, \
+            f"Outside material {self.outside_material} not found in materials"
         # surfaces
         skin_surfaces_xml = structure.findall('skinsurface')
         skin_surfaces_map = {skin.find('volumeref').get('ref'): skin.get('surfaceproperty') for skin in
@@ -203,6 +213,26 @@ class RATGeoLoader:
 
         # gmsh.option.setNumber('Geometry.Tolerance', 0.001)
         gmsh.model.add(self.gdml_file)
+    
+    def import_subdetector(self, volume_regex, subdetector):
+        """
+        Import a section of the detector that is pre-built. Useful for repeating structures like PMT arrays.
+        Note: Applying pre-built subdetectors will bypass mesh conformation. This means that the subdetector element
+        have no contact with any other detector elements.
+        Args:
+            volume_regex: str - Regular expression to match the volume name to apply the subdetector to.
+            subdetector: chroma.detector.Detector
+        """
+        for placement, volume in self.placement_to_volume_map.items():
+            if bool(re.search(volume_regex, volume.name)):
+                logger.info(f"Applying subdetector to {placement}")
+                volume.subdetector = copy(subdetector)
+                volume.subdetector.mesh = deepcopy(subdetector.mesh)
+                volume.subdetector.mesh.vertices = (
+                        np.inner(volume.subdetector.mesh.vertices, volume.absolute_rot) + volume.absolute_pos
+                )
+
+
 
     def add_ratdb(self, ratdb_file):
         self.ratdb_parser = RatDBParser(ratdb_file)
@@ -307,6 +337,8 @@ class RATGeoLoader:
         gmsh.clear()
         while len(q):
             volume: Volume = q.pop()
+            if volume.subdetector is not None:
+                continue
             pos = volume.absolute_pos
             rot = volume.absolute_rot
             parent_material_ref = volume.parent_material_ref
@@ -315,7 +347,7 @@ class RATGeoLoader:
                 q.append(child)
             classification, kwargs = volume_classifier(volume.name, volume.material_ref, parent_material_ref)
             if classification == 'omit':
-                logger.debug(f"Volume {volume.name} is omitted.")
+                logger.warn(f"Volume {volume.name} is omitted.")
                 continue
 
             tag_or_mesh = self.build_mesh(volume.solid_ref)
@@ -369,14 +401,12 @@ class RATGeoLoader:
             pmt_channel = prop['pmt_channel']
             solid_id = 0 if pmt_channel is None else pmt_channel + 1
             color = DEFAULT_PMT_COLOR if pmt_channel is not None else DEFAULT_SOLID_COLOR
-            vol_a_name = vol_a.name if vol_a is not None else 'OUTSIDE'
+            vol_a_name = vol_a.name if vol_a is not None else 'OUTSIDE'  # outside of world volume
             vol_b_name = vol_b.name if vol_b is not None else 'OUTSIDE'
-            vol_a_mref = vol_a.material_ref if vol_a is not None else self.world.material_ref
-            vol_b_mref = vol_b.material_ref if vol_b is not None else self.world.material_ref
+            vol_a_mref = vol_a.material_ref if vol_a is not None else self.outside_material
+            vol_b_mref = vol_b.material_ref if vol_b is not None else self.outside_material
             logger.info(f"Processing surface {surf_tag} between {vol_a_name} and {vol_b_name}")
             face_tags_for_surf, node_tag_per_face_for_surf = mesh.getElementsByType(self.triangle_typeid, surf_tag)
-            # face_tags_for_surf -= 1  # because tags are 1-indexed
-            # node_tag_per_face_for_surf = np.reshape(node_tags_for_surf, (-1, 3))
             # fancy numpy magic for assigning node indices to faces
             node_idx_per_face_for_surf = np.vectorize(node_tag_to_index.get)(node_tag_per_face_for_surf)
             orientation = gen_mesh.surface_orientation(node_idx_per_face_for_surf, coords, prop['volumes'])
@@ -413,7 +443,7 @@ class RATGeoLoader:
         detector.solid_id_to_channel_index = np.arange(-1, self.nPMTs, dtype=int)
         detector.channel_index_to_solid_id = np.arange(self.nPMTs, dtype=int) + 1
 
-        # add tessellated solids. Put all of them in lists fist and concat them at the end because numpy concat is slow
+        # add all elements outside the gmsh model
         concat_meshes = [detector.mesh]
         concat_colors = [detector.colors]
         concat_solid_id = [detector.solid_id]
@@ -425,7 +455,7 @@ class RATGeoLoader:
                 logger.info(f"Adding tessellated solid {volume.name} to the geometry")
                 concat_meshes.append(volume.mesh)
                 concat_colors.append(np.ones(len(volume.mesh.triangles)) * DEFAULT_SOLID_COLOR)
-                concat_solid_id.append(np.ones(len(volume.mesh.triangles), dtype=int))
+                concat_solid_id.append(np.zeros(len(volume.mesh.triangles), dtype=int))
                 inner_material = self.material_lookup[volume.material_ref]
                 outer_material = self.material_lookup[volume.parent_material_ref]
                 skin_surface = self.surface_lookup[volume.skin_surface]
@@ -434,7 +464,17 @@ class RATGeoLoader:
                 concat_surface_index.append(np.ones(len(volume.mesh.triangles), dtype=int) * skin_surface)
                 nFaces += len(volume.mesh.triangles)
                 nVtxs += len(volume.mesh.vertices)
-                # logger.info(f"Added {len(volume.mesh.triangles)} triangles and {len(volume.mesh.vertices)} vertices")
+            elif volume.subdetector is not None:
+                logger.info(f"Adding subdetector {volume.name} to the geometry")
+                concat_meshes.append(volume.subdetector.mesh)
+                concat_colors.append(volume.subdetector.colors)
+                solid_id = 0 if volume.pmt_channel is None else volume.pmt_channel + 1
+                concat_solid_id.append(np.ones(len(volume.subdetector.mesh.triangles), dtype=int)*solid_id)
+                concat_inner_material_index.append(volume.subdetector.inner_material_index)
+                concat_outer_material_index.append(volume.subdetector.outer_material_index)
+                concat_surface_index.append(volume.subdetector.surface_index)
+                nFaces += len(volume.subdetector.mesh.triangles)
+                nVtxs += len(volume.subdetector.mesh.vertices)
         logger.info(f"Total after adding Tess Objects: {nFaces} triangles and {nVtxs} vertices")
         n_vertex_cumulative = np.cumsum([len(mesh.vertices) for mesh in concat_meshes])
         n_vertex_cumulative = np.concatenate([np.zeros(1), n_vertex_cumulative[:-1]])
@@ -479,7 +519,7 @@ class RATGeoLoader:
         for surf_tag, placementNames in surface_tags_to_placementNames.items():
             properties = {'volumes': [], 'surface': None, 'pmt_channel': None}
             for pname in placementNames:
-                if pname == '/':
+                if pname == '/':  # outside of world volume
                     properties['volumes'].append(None)
                     continue
                 else:
