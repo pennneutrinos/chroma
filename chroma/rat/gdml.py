@@ -270,12 +270,12 @@ def create_surface(matrix_map: Dict[Optional[str], et.Element], surface_xml: et.
         y_val_elem = dichroic_data.find('y')
         angles = get_vector(y_val_elem)
         data_elem = dichroic_data.find('data')
-        transmission_data = get_vector(data_elem).reshape(x_length, y_length)
+        transmission_data = get_vector(data_elem).reshape(x_length, y_length)/100
         reflection_data = 1 - transmission_data
         angles = np.deg2rad(angles)
         transmits = [np.asarray([wvls, transmission_data[:, i]]).T for i in range(y_length)]
         reflects = [np.asarray([wvls, reflection_data[:, i]]).T for i in range(y_length)]
-        surface.dichroic_props = DichroicProps(angles, transmits, reflects)
+        surface.dichroic_props = DichroicProps(angles, reflect=reflects, transmit=transmits)
     return surface
 
 

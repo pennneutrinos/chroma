@@ -353,9 +353,9 @@ def conform_model(root_volume):
     Args:
         root_volume: tag of the root volume in the model.
     """
-    logger.info(f"Conforming children of {root_volume.placementName}")
     if not root_volume.in_gmsh_model:
         return
+    logger.info(f"Conforming children of {root_volume.placementName}")
     child_tags = []
     for child in root_volume.children:
         if child.in_gmsh_model:
