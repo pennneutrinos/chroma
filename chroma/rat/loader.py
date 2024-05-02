@@ -595,7 +595,7 @@ class RATGeoLoader:
                     volume.pmt_type = pmt_types[pmt_array_idx][pmt_idx_in_array]
                     volume.pmt_channel = self.nPMTs
                     self.pmt_index_to_type.append(volume.pmt_type)
-                    self.pmt_index_to_position.append(volume.absolute_pos)
+                    self.pmt_index_to_position.append(pmt_array_positions[pmt_array_idx][pmt_idx_in_array])
                     self.nPMTs += 1
                     logger.info(f"Assigned PMT Channel {volume.pmt_channel} to {placement}, Type {volume.pmt_type}")
                     break
