@@ -136,6 +136,6 @@ class Detector(Geometry):
         self.solid_id_to_channel_index = np.asarray(self.solid_id_to_channel_index, dtype=np.int32)
         self.channel_index_to_solid_id = np.asarray(self.channel_index_to_solid_id, dtype=np.int32)
         self.channel_index_to_channel_type = np.asarray(self.channel_index_to_channel_type, dtype=np.int32)
-        self.channel_index_to_position = np.asarray(self.channel_index_to_position, dtype=np.int32)
+        self.channel_index_to_position = np.asarray(self.channel_index_to_position, dtype=np.float32)
         Geometry.flatten(self)
         
